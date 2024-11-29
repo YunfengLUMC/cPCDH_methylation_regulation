@@ -1,0 +1,959 @@
+---
+title: "Script_04_Effect of candidate gene locus on PCDH methylation in blood and brain"
+author: "Yunfeng"
+date: "2024-06-11"
+output: html_document
+---
+
+```{r}
+#set library path.
+.libPaths("/exports/molepi/RSC_BIOS/Users/yliu/Rlibs")
+```
+
+```{r}
+# load libraries
+library(tidyverse)
+library(Gviz)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(Homo.sapiens)
+library(MatrixEQTL)
+library(SummarizedExperiment)
+```
+
+```{r}
+# Load data
+load(file = "Output_01_ann450k_BIOS_PCDH.RData")
+load(file = "Output_01_dat_mean_BDR_PCDH.RData")
+load(file = "Output_02_mvalues_PCDH_hrcv1.1.RData")
+load(file = "Output_03_dat_mean_BIOS_PCDH.RData")
+load(file = "Input_04_Trans_meQTL_PCDH_brain_validation.RData")
+```
+
+```{r}
+# rank-inverse normal(RIN) transformation for PCDH methylation data in blood.
+RIN <- function(x) {
+  y <- rank(x, NA)
+  y <- ppoints(y)[y]
+  y <- qnorm(y)
+  x[!is.na(x)] <- y
+  x
+ }
+
+RIN.mvalues_PCDH <- t(apply(assay(mvalues_PCDH_hrcv1.1), 1, RIN))
+
+# Prepare covariates data
+cvrt<-as.data.frame(colData(mvalues_PCDH_hrcv1.1))[c("***","***",...."***")]
+
+## Change some covariates into factor if necessary
+cvrt$biobank_id<-factor(cvrt$biobank_id)
+cvrt$sentrix_position<-factor(cvrt$sentrix_position)
+cvrt$sample_plate<-factor(cvrt$sample_plate)
+```
+
+```{r}
+# Test effect of SMCHD1 locus (chr18:2655725-2805015) on PCDH methylation,50kb window around this gene.
+### BIOS blood
+gr_SMCHD1<-GRanges(seqnames="chr18",ranges=IRanges(start = 2605725, end = 2855015))
+gr_chr18<-GRanges(seqnames="chr18",ranges=IRanges(start = SimesPValue_chr18$Position, end = SimesPValue_chr18$Position))
+gr_SMCHD1_snps<-subsetByOverlaps(gr_chr18, gr_SMCHD1)
+gr_SMCHD1_snps<-as.data.frame(gr_SMCHD1_snps)
+gr_SMCHD1_snps$symbol<-paste("18:",gr_SMCHD1_snps$start,sep = "")
+
+SMCHD1_BIOS_dosages<-dosages[gr_SMCHD1_snps$symbol,]
+
+# Prepare covariates data
+cvrt<-t(model.matrix(~.,data=cvrt)[,-1])
+cvrt = SlicedData$new(cvrt)
+M = SlicedData$new(RIN.mvalues_PCDH)
+geno = SlicedData$new(SMCHD1_BIOS_dosages)
+
+# Running models and keep t-statistics between SNP-CpG pairs
+me = Matrix_eQTL_engine(
+            snps = geno,
+            gene = M,
+            cvrt = cvrt,
+            output_file_name = NULL,
+            pvOutputThreshold = 1,
+            useModel = modelLINEAR,
+            errorCovariance = numeric(),
+            verbose = TRUE,
+            pvalue.hist = FALSE,
+            min.pv.by.genesnp = FALSE,
+            noFDRsaveMemory = FALSE
+        )
+
+dat_meQTL_PCDH_SMCHD1<-me$all$eqtls
+dat_meQTL_PCDH_SMCHD1<-dat_meQTL_PCDH_SMCHD1[,c("snps","gene","beta","statistic","pvalue")]
+colnames(dat_meQTL_PCDH_SMCHD1)[4]<-"t-satistics"
+
+# Doing multiple testing correction for 607 Pvalues per SNP
+simes = function (q,n) {
+    q = sort(q)
+    S = n /(1:length(q))  
+    min(min(q*S), 1)  
+}
+
+SimesPValue_SMCHD1_locus<-tapply(dat_meQTL_PCDH_SMCHD1$pvalue,dat_meQTL_PCDH_SMCHD1$snps,simes,n=607)
+SimesPValue_SMCHD1_locus<-as.data.frame(SimesPValue_SMCHD1_locus)
+SimesPValue_SMCHD1_locus$Position<-as.numeric(gsub("^.*[:]", "", rownames(SimesPValue_SMCHD1_locus)))
+
+# check top SNP(rs10775431)
+rs10775431_SMCHD1_PCDH_blood<-filter(dat_meQTL_PCDH_SMCHD1,snps=="18:2714889")
+rownames(rs10775431_SMCHD1_PCDH_blood)<-rs10775431_SMCHD1_PCDH_blood$gene
+ann450K_PCDH<-as.data.frame(ann450K_PCDH)
+rs10775431_SMCHD1_PCDH_blood<-rs10775431_SMCHD1_PCDH_blood[rownames(ann450K_PCDH),]
+rs10775431_SMCHD1_PCDH_blood$p.adj<-p.adjust(rs10775431_SMCHD1_PCDH_blood$pvalue,method="BH")
+rs10775431_SMCHD1_PCDH_blood$Position<-ann450K_PCDH$start
+rs10775431_SMCHD1_PCDH_blood$Symbol<-ann450K_PCDH$Symbol
+rs10775431_SMCHD1_PCDH_blood$Tissue<-"Blood"
+colnames(rs10775431_SMCHD1_PCDH_blood)[1]<-"SNP"
+rownames(rs10775431_SMCHD1_PCDH_blood)<-NULL
+
+### BDR brain
+rs10775431_SMCHD1_PCDH_brain<-subset(Trans_meQTL_PCDH_brain_validation,SNP=="18.2714889_G")
+rownames(rs10775431_SMCHD1_PCDH_brain)<-rs10775431_SMCHD1_PCDH_brain$gene
+rs10775431_SMCHD1_PCDH_brain<-rs10775431_SMCHD1_PCDH_brain[dat_mean_BDR_PCDH$CpG,]
+rs10775431_SMCHD1_PCDH_brain$beta<-rs10775431_SMCHD1_PCDH_brain$beta/dat_mean_BDR_PCDH$sd
+rs10775431_SMCHD1_PCDH_brain$Position<-dat_mean_BDR_PCDH$Start+1
+rs10775431_SMCHD1_PCDH_brain$Symbol<-dat_mean_BDR_PCDH$Symbol
+rs10775431_SMCHD1_PCDH_brain$Tissue<-"Brain"
+colnames(rs10775431_SMCHD1_PCDH_brain)[5]<-"pvalue"
+rownames(rs10775431_SMCHD1_PCDH_brain)<-NULL
+save(rs10775431_SMCHD1_PCDH_blood,rs10775431_SMCHD1_PCDH_brain,file = "Output_04_SMCHD1_variant_PCDH_blood_brain.RData")
+```
+
+
+```{r}
+# Check SMCHD1 statistical significance consistency between blood and brain
+rs10775431_SMCHD1_PCDH_blood<-rs10775431_SMCHD1_PCDH_blood[,-c(4,5)]
+rs10775431_SMCHD1_PCDH_blood$col<-ifelse(rs10775431_SMCHD1_PCDH_blood$p.adj<0.05,"FDR significant in blood","FDR not significant in blood")
+colnames(rs10775431_SMCHD1_PCDH_blood)[4]<-"pvalue"
+
+rs10775431_SMCHD1_PCDH_brain<-rs10775431_SMCHD1_PCDH_brain[,-4]
+rs10775431_SMCHD1_PCDH_brain$col<-ifelse(rs10775431_SMCHD1_PCDH_brain$pvalue<0.05,"Nominal p-value significant in brain","Nominal p-value not significant in brain")
+
+rs10775431_SMCHD1_PCDH_blood_brain<-rbind(rs10775431_SMCHD1_PCDH_blood,rs10775431_SMCHD1_PCDH_brain)
+rs10775431_SMCHD1_PCDH_blood_brain$col<-factor(rs10775431_SMCHD1_PCDH_blood_brain$col,levels=c("FDR significant in blood","FDR not significant in blood","Nominal p-value significant in brain","Nominal p-value not significant in brain"))
+save(rs10775431_SMCHD1_PCDH_blood_brain,file = "Output_04_rs10775431_SMCHD1_PCDH_blood_brain.RData")
+
+# Check SMCHD1 effect size consistency between blood and brain
+id_overlap<-intersect(rs10775431_SMCHD1_PCDH_blood$gene,rs10775431_SMCHD1_PCDH_brain$gene)
+rs10775431_SMCHD1_PCDH_blood_brain_overlap<-subset(rs10775431_SMCHD1_PCDH_blood_brain,gene%in%id_overlap)
+rs10775431_SMCHD1_PCDH_blood_overlap<-subset(rs10775431_SMCHD1_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs10775431_SMCHD1_PCDH_brain_overlap<-subset(rs10775431_SMCHD1_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs10775431_SMCHD1_PCDH_blood_overlap$Significance<-ifelse(rs10775431_SMCHD1_PCDH_blood_overlap$col=="FDR not significant in blood"&rs10775431_SMCHD1_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Neither",ifelse(rs10775431_SMCHD1_PCDH_blood_overlap$col=="FDR significant in blood"&rs10775431_SMCHD1_PCDH_brain_overlap$col=="Nominal p-value significant in brain","Blood & Brain",ifelse(rs10775431_SMCHD1_PCDH_blood_overlap$col=="FDR significant in blood"&rs10775431_SMCHD1_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Blood only","Brain only")))
+
+rs10775431_SMCHD1_PCDH_brain_overlap$Significance<-rs10775431_SMCHD1_PCDH_blood_overlap$Significance
+rs10775431_SMCHD1_PCDH_blood_brain_overlap<-rbind(rs10775431_SMCHD1_PCDH_blood_overlap,rs10775431_SMCHD1_PCDH_brain_overlap)
+save(rs10775431_SMCHD1_PCDH_blood_brain_overlap,file = "Output_04_rs10775431_SMCHD1_PCDH_blood_brain_overlap.RData")    
+
+rs10775431_SMCHD1_PCDH_blood_overlap<-filter(rs10775431_SMCHD1_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs10775431_SMCHD1_PCDH_brain_overlap<-filter(rs10775431_SMCHD1_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs10775431_SMCHD1_PCDH_blood_brain_overlap_es<-data.frame(CpG=rs10775431_SMCHD1_PCDH_blood_overlap$gene,blood.es=rs10775431_SMCHD1_PCDH_blood_overlap$beta,brain.es=rs10775431_SMCHD1_PCDH_brain_overlap$beta,Symbol=rs10775431_SMCHD1_PCDH_blood_overlap$Symbol,Significance=rs10775431_SMCHD1_PCDH_blood_overlap$Significance) 
+save(rs10775431_SMCHD1_PCDH_blood_brain_overlap_es,file = "Output_04_rs10775431_SMCHD1_PCDH_blood_brain_overlap_es.RData")   
+```
+
+
+```{r}
+#### Gviz for SMCHD1 variant on PCDH methylation in blood and brain,and there are five data tracks need to be prepared.
+# Data track1 (effect direction in blood)
+# Positive effect (Significant)
+colnames(rs10775431_SMCHD1_PCDH_blood)[2]<-"cpg"
+colnames(rs10775431_SMCHD1_PCDH_brain)[2]<-"cpg"
+rs10775431_SMCHD1_PCDH_brain$beta<-rs10775431_SMCHD1_PCDH_brain$beta*-1
+
+rs10775431_SMCHD1_PCDH_blood_positive_sig<-filter(rs10775431_SMCHD1_PCDH_blood,beta>0&p.adj<0.05)
+rs10775431_SMCHD1_PCDH_blood_positive_sig$Significance<--log10(rs10775431_SMCHD1_PCDH_blood_positive_sig$pvalue)
+
+# Negative effect (Significant)
+rs10775431_SMCHD1_PCDH_blood_negative_sig<-filter(rs10775431_SMCHD1_PCDH_blood,beta<0&p.adj<0.05)  
+rs10775431_SMCHD1_PCDH_blood_negative_sig$Significance<--(-log10(rs10775431_SMCHD1_PCDH_blood_negative_sig$pvalue)) 
+
+# Positive effect (Not significant)
+rs10775431_SMCHD1_PCDH_blood_positive_not_sig<-filter(rs10775431_SMCHD1_PCDH_blood,beta>0&p.adj>0.05)
+rs10775431_SMCHD1_PCDH_blood_positive_not_sig$Significance<--log10(rs10775431_SMCHD1_PCDH_blood_positive_not_sig$pvalue) 
+
+# Negative effect (Not significant)
+rs10775431_SMCHD1_PCDH_blood_negative_not_sig<-filter(rs10775431_SMCHD1_PCDH_blood,beta<0&p.adj>0.05)
+rs10775431_SMCHD1_PCDH_blood_negative_not_sig$Significance<--(-log10(rs10775431_SMCHD1_PCDH_blood_negative_not_sig$pvalue)) 
+
+rs10775431_SMCHD1_PCDH_blood_positive_negative_all<-rbind(rs10775431_SMCHD1_PCDH_blood_positive_not_sig,rs10775431_SMCHD1_PCDH_blood_negative_not_sig,rs10775431_SMCHD1_PCDH_blood_positive_sig,rs10775431_SMCHD1_PCDH_blood_negative_sig)
+
+# Data track2 (Mean methylation in blood)
+rs10775431_SMCHD1_PCDH_blood_mean<-rbind(rs10775431_SMCHD1_PCDH_blood_positive_not_sig,rs10775431_SMCHD1_PCDH_blood_negative_not_sig,rs10775431_SMCHD1_PCDH_blood_positive_sig,rs10775431_SMCHD1_PCDH_blood_negative_sig)
+
+# Data track3 (effect direction in brain)
+# Positive effect (Significant)
+rs10775431_SMCHD1_PCDH_brain_positive_sig<-filter(rs10775431_SMCHD1_PCDH_brain,beta>0&pvalue<0.05)
+rs10775431_SMCHD1_PCDH_brain_positive_sig$Significance<--log10(rs10775431_SMCHD1_PCDH_brain_positive_sig$pvalue)
+
+# Negative effect (Significant)
+rs10775431_SMCHD1_PCDH_brain_negative_sig<-filter(rs10775431_SMCHD1_PCDH_brain,beta<0&pvalue<0.05) 
+rs10775431_SMCHD1_PCDH_brain_negative_sig$Significance<--(-log10(rs10775431_SMCHD1_PCDH_brain_negative_sig$pvalue)) 
+
+# Positive effect (Not Significant)
+rs10775431_SMCHD1_PCDH_brain_positive_not_sig<-filter(rs10775431_SMCHD1_PCDH_brain,beta>0&pvalue>0.05)
+rs10775431_SMCHD1_PCDH_brain_positive_not_sig$Significance<--log10(rs10775431_SMCHD1_PCDH_brain_positive_not_sig$pvalue)
+
+# Negative effect (Not Significant)
+rs10775431_SMCHD1_PCDH_brain_negative_not_sig<-filter(rs10775431_SMCHD1_PCDH_brain,beta<0&pvalue>0.05)
+rs10775431_SMCHD1_PCDH_brain_negative_not_sig$Significance<--(-log10(rs10775431_SMCHD1_PCDH_brain_negative_not_sig$pvalue))
+
+rs10775431_SMCHD1_PCDH_brain_positive_negative_all<-rbind(rs10775431_SMCHD1_PCDH_brain_positive_not_sig,rs10775431_SMCHD1_PCDH_brain_negative_not_sig,rs10775431_SMCHD1_PCDH_brain_positive_sig,rs10775431_SMCHD1_PCDH_brain_negative_sig)
+
+# Data track4 (Mean methylation in brain)
+rs10775431_SMCHD1_PCDH_brain_mean<-rbind(rs10775431_SMCHD1_PCDH_brain_positive_not_sig,rs10775431_SMCHD1_PCDH_brain_negative_not_sig,rs10775431_SMCHD1_PCDH_brain_positive_sig,rs10775431_SMCHD1_PCDH_brain_negative_sig)
+
+# Data track5 (PCDH promoters:1500 upstream to 500 downstream of TSS)
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+PCDH_isoforms<-GRanges(seqnames="chr5",ranges=IRanges(start = 140165721, end = 140892546))
+PCDH_isoforms_txdb<-subsetByOverlaps(genes(txdb),PCDH_isoforms)
+PCDH_isoforms_symbol<-select(org.Hs.eg.db,PCDH_isoforms_txdb$gene_id,"SYMBOL")
+PCDH_isoforms_txdb$symbol<-PCDH_isoforms_symbol$SYMBOL
+PCDH_isoforms_txdb<-PCDH_isoforms_txdb[order(ranges(PCDH_isoforms_txdb))]
+
+# PCDHGB4(5:140767265-140892546) and PCDHGA8(5:140772200-140892546) need to be fixed manually.
+id_PCDHGB4<-which(names(PCDH_isoforms_txdb)=="8641")
+start(PCDH_isoforms_txdb[id_PCDHGB4,])<-140767265
+end(PCDH_isoforms_txdb[id_PCDHGB4,])<-140892546
+
+id_PCDHGA8<-which(names(PCDH_isoforms_txdb)=="9708")
+start(PCDH_isoforms_txdb[id_PCDHGA8,])<-140772200
+end(PCDH_isoforms_txdb[id_PCDHGA8,])<-140892546
+
+# Adding PCDHB9 track (chr5:140566735-140571114)
+gr_PCDHB9 <- GRanges(seqnames="chr5",IRanges(start=140566735,end=140571114), strand="+")
+gr_PCDHB9$gene_id<-"56127"
+gr_PCDHB9$symbol<-"PCDHB9"
+PCDH_isoforms_txdb<-c(gr_PCDHB9,PCDH_isoforms_txdb)
+
+# remove unrelated genes (non protein-coding genes/non PCDH genes)
+PCDH_isoforms_txdb<-subset(PCDH_isoforms_txdb,!PCDH_isoforms_txdb$symbol%in% c("PCDHB17P","PCDHB18P","PCDHB19P","SLC25A2","TAF7","PCDHGB8P"))
+PCDH_promoters_txdb<-promoters(PCDH_isoforms_txdb,upstream = 1500, downstream = 500) 
+ann450K_PCDH_Promoters<-PCDH_promoters_txdb
+ann450K_PCDH_Promoters<-ann450K_PCDH_Promoters[,NULL]
+```
+
+
+```{r}
+#### Gviz plot
+# IdeogramTrack
+idtrack <- IdeogramTrack(genome = "hg19", chromosome = "chr5",fontcolor="black")
+
+# GenomeAxisTrack
+axisTrack <- GenomeAxisTrack()
+
+# Promoters track 
+Promoters_track<-AnnotationTrack(ann450K_PCDH_Promoters, name = "Promoter",background.title="transparent",col.title="black",background.panel = "white",stacking="squish",fill="gray")
+
+# Blood data track for effect direction
+ann450K_PCDH_blood_direction<-ann450K_PCDH[,NULL]
+ann450K_PCDH_blood_direction<-ann450K_PCDH_blood_direction[rs10775431_SMCHD1_PCDH_blood_positive_negative_all$cpg,]
+ann450K_PCDH_blood_direction$Significance<-rs10775431_SMCHD1_PCDH_blood_positive_negative_all$Significance
+ann450K_PCDH_blood_direction$gray<-c(ann450K_PCDH_blood_direction$Significance[1:386],rep(NA,221))
+ann450K_PCDH_blood_direction$red<-c(rep(NA,386),ann450K_PCDH_blood_direction$Significance[387:607])
+ann450K_PCDH_blood_direction$Significance<-NULL
+dTrack_PCDH_blood_direction<-DataTrack(ann450K_PCDH_blood_direction,name="-log10 (P)",groups=c(1,2),col=c("#E9E7E8","#E76254"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,ylim=c(-9,9),yTicksAt=c(-9,-5,0,5,9),baseline=0,col.baseline="black",lwd.baseline=2)
+
+# Blood data track for mean methylation
+# without line
+dat_mean_BIOS_PCDH<-dat_mean_BIOS_PCDH[rs10775431_SMCHD1_PCDH_blood_mean$cpg,]
+ann450K_PCDH_blood_mean_without_line<-ann450K_PCDH[,NULL]
+ann450K_PCDH_blood_mean_without_line<-ann450K_PCDH_blood_mean_without_line[rs10775431_SMCHD1_PCDH_blood_mean$cpg,]
+ann450K_PCDH_blood_mean_without_line$Mean.methylation<-dat_mean_BIOS_PCDH$Mean.methylation
+ann450K_PCDH_blood_mean_without_line$gray<-c(ann450K_PCDH_blood_mean_without_line$Mean.methylation[1:386],rep(NA,221))
+ann450K_PCDH_blood_mean_without_line$red<-c(rep(NA,386),ann450K_PCDH_blood_mean_without_line$Mean.methylation[387:607])
+ann450K_PCDH_blood_mean_without_line$Mean.methylation<-NULL
+dTrack_PCDH_blood_mean_without_line<-DataTrack(ann450K_PCDH_blood_mean_without_line,name="DNAm (Beta)",groups=c(1,2),col=c("#E9E7E8","#E76254"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F)
+
+# with line
+ann450K_PCDH_blood_mean_with_line<-ann450K_PCDH[,NULL]
+ann450K_PCDH_blood_mean_with_line<-ann450K_PCDH_blood_mean_with_line[rs10775431_SMCHD1_PCDH_blood_mean$cpg,]
+ann450K_PCDH_blood_mean_with_line$Mean.methylation<-dat_mean_BIOS_PCDH$Mean.methylation
+dTrack_PCDH_blood_mean_with_line<-DataTrack(ann450K_PCDH_blood_mean_with_line,name="DNAm (Beta)",col="#E9E7E8",background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,type = c("a","p"))
+
+# Overlay
+dTrack_PCDH_blood_mean_overlay<- OverlayTrack(list(dTrack_PCDH_blood_mean_with_line,dTrack_PCDH_blood_mean_without_line),background.title="transparent",col.title="black",col.axis="black")
+
+# Brain data track for effect direction
+rownames(dat_mean_BDR_PCDH)<-dat_mean_BDR_PCDH$CpG
+dat_mean_BDR_PCDH<-dat_mean_BDR_PCDH[rs10775431_SMCHD1_PCDH_brain_positive_negative_all$cpg,]
+annEPIC_PCDH_brain<-GRanges(seqnames="chr5",IRanges(start=dat_mean_BDR_PCDH$Start+1,end=dat_mean_BDR_PCDH$End), strand="*")
+names(annEPIC_PCDH_brain)<-dat_mean_BDR_PCDH$CpG
+
+annEPIC_PCDH_brain_direction<-annEPIC_PCDH_brain[,NULL]
+annEPIC_PCDH_brain_direction<-annEPIC_PCDH_brain_direction[rs10775431_SMCHD1_PCDH_brain_positive_negative_all$cpg,]
+annEPIC_PCDH_brain_direction$Significance<-rs10775431_SMCHD1_PCDH_brain_positive_negative_all$Significance
+annEPIC_PCDH_brain_direction$gray<-c(annEPIC_PCDH_brain_direction$Significance[1:617],rep(NA,130))
+annEPIC_PCDH_brain_direction$blue<-c(rep(NA,617),annEPIC_PCDH_brain_direction$Significance[618:747])
+annEPIC_PCDH_brain_direction$Significance<-NULL
+dTrack_PCDH_brain_direction<-DataTrack(annEPIC_PCDH_brain_direction,name="-log10 (P)",groups=c(1,2),col=c("#E9E7E8","#56B4E9"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,ylim=c(-6,6),yTicksAt=c(-6,-3,0,3,6),baseline=0,col.baseline="black",lwd.baseline=2)
+
+# Brain data track for mean methylation
+# without line
+annEPIC_PCDH_brain_mean_without_line<-annEPIC_PCDH_brain
+annEPIC_PCDH_brain_mean_without_line$Mean.methylation<-dat_mean_BDR_PCDH$Mean.methylation
+annEPIC_PCDH_brain_mean_without_line<-annEPIC_PCDH_brain_mean_without_line[rs10775431_SMCHD1_PCDH_brain_mean$cpg,]
+annEPIC_PCDH_brain_mean_without_line$gray<-c(annEPIC_PCDH_brain_mean_without_line$Mean.methylation[1:617],rep(NA,130))
+annEPIC_PCDH_brain_mean_without_line$blue<-c(rep(NA,617),annEPIC_PCDH_brain_mean_without_line$Mean.methylation[618:747])
+annEPIC_PCDH_brain_mean_without_line$Mean.methylation<-NULL
+dTrack_PCDH_brain_mean_without_line<-DataTrack(annEPIC_PCDH_brain_mean_without_line,name="DNAm (Beta)",groups=c(1,2),col=c("#E9E7E8","#56B4E9"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F)
+
+# with line
+annEPIC_PCDH_brain_mean_with_line<-annEPIC_PCDH_brain
+annEPIC_PCDH_brain_mean_with_line$Mean.methylation<-dat_mean_BDR_PCDH$Mean.methylation
+annEPIC_PCDH_brain_mean_with_line<-annEPIC_PCDH_brain_mean_with_line[rs10775431_SMCHD1_PCDH_brain_mean$cpg,]
+dTrack_PCDH_brain_mean_with_line<-DataTrack(annEPIC_PCDH_brain_mean_with_line,name="DNAm (Beta)",col="#E9E7E8",background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,type = c("a","p"))
+
+# Overlay
+dTrack_PCDH_brain_mean_overlay<- OverlayTrack(list(dTrack_PCDH_brain_mean_with_line,dTrack_PCDH_brain_mean_without_line),background.title="transparent",col.title="black",col.axis="black")
+
+save(idtrack,axisTrack,dTrack_PCDH_blood_direction,dTrack_PCDH_blood_mean_overlay,dTrack_PCDH_brain_direction,dTrack_PCDH_brain_mean_overlay,Promoters_track,file = "Output_04_rs10775431_SMCHD1_PCDH_blood_brain_Gviz.RData")
+
+pdf("Output_04_rs10775431_SMCHD1_PCDH_blood_brain_Gviz.pdf",width = 18,height = 20)
+plotTracks(list(idtrack,axisTrack,dTrack_PCDH_blood_direction,dTrack_PCDH_blood_mean_overlay,dTrack_PCDH_brain_direction,dTrack_PCDH_brain_mean_overlay,Promoters_track),from=140124721,to=140933546,cex=2,cex.axis=2.2,cex.title=2.2,sizes = c(0.2,0.2,0.7,0.7,0.7,0.7,0.4))
+dev.off()
+```
+
+
+```{r}
+# Test effect of CDCA7 locus (chr2:174219548-174233725) on PCDH methylation,50kb window around this gene.
+### BIOS blood
+gr_CDCA7<-GRanges(seqnames="chr2",ranges=IRanges(start = 174219548, end = 174233725))
+gr_chr2<-GRanges(seqnames="chr2",ranges=IRanges(start = SimesPValue_chr2$Position, end = SimesPValue_chr2$Position))
+gr_CDCA7_snps<-subsetByOverlaps(gr_chr2, gr_CDCA7)
+gr_CDCA7_snps<-as.data.frame(gr_CDCA7_snps)
+gr_CDCA7_snps$symbol<-paste("2:",gr_CDCA7_snps$start,sep = "")
+
+CDCA7_BIOS_dosages<-dosages[gr_CDCA7_snps$symbol,]
+
+# Prepare covariates data
+cvrt<-t(model.matrix(~.,data=cvrt)[,-1])
+cvrt = SlicedData$new(cvrt)
+M = SlicedData$new(RIN.mvalues_PCDH)
+geno = SlicedData$new(CDCA7_BIOS_dosages)
+
+# Running models and keep t-statistics between SNP-CpG pairs
+me = Matrix_eQTL_engine(
+            snps = geno,
+            gene = M,
+            cvrt = cvrt,
+            output_file_name = NULL,
+            pvOutputThreshold = 1,
+            useModel = modelLINEAR,
+            errorCovariance = numeric(),
+            verbose = TRUE,
+            pvalue.hist = FALSE,
+            min.pv.by.genesnp = FALSE,
+            noFDRsaveMemory = FALSE
+        )
+
+dat_meQTL_PCDH_CDCA7<-me$all$eqtls
+dat_meQTL_PCDH_CDCA7<-dat_meQTL_PCDH_CDCA7[,c("snps","gene","beta","statistic","pvalue")]
+colnames(dat_meQTL_PCDH_CDCA7)[4]<-"t-satistics"
+
+# Doing multiple testing correction for 607 Pvalues per SNP
+simes = function (q,n) {
+    q = sort(q)
+    S = n /(1:length(q))  
+    min(min(q*S), 1)  
+}
+
+SimesPValue_CDCA7_locus<-tapply(dat_meQTL_PCDH_CDCA7$pvalue,dat_meQTL_PCDH_CDCA7$snps,simes,n=607)
+SimesPValue_CDCA7_locus<-as.data.frame(SimesPValue_CDCA7_locus)
+SimesPValue_CDCA7_locus$Position<-as.numeric(gsub("^.*[:]", "", rownames(SimesPValue_CDCA7_locus)))
+
+# check top SNP(rs12621984)
+rs12621984_CDCA7_PCDH_blood<-filter(dat_meQTL_PCDH_CDCA7,snps=="2:174235962
+")
+rownames(rs12621984_CDCA7_PCDH_blood)<-rs12621984_CDCA7_PCDH_blood$gene
+ann450K_PCDH<-as.data.frame(ann450K_PCDH)
+rs12621984_CDCA7_PCDH_blood<-rs12621984_CDCA7_PCDH_blood[rownames(ann450K_PCDH),]
+rs12621984_CDCA7_PCDH_blood$p.adj<-p.adjust(rs12621984_CDCA7_PCDH_blood$pvalue,method="BH")
+rs12621984_CDCA7_PCDH_blood$Position<-ann450K_PCDH$start
+rs12621984_CDCA7_PCDH_blood$Symbol<-ann450K_PCDH$Symbol
+rs12621984_CDCA7_PCDH_blood$Tissue<-"Blood"
+colnames(rs12621984_CDCA7_PCDH_blood)[1]<-"SNP"
+rownames(rs12621984_CDCA7_PCDH_blood)<-NULL
+
+### BDR brain
+rs12621984_CDCA7_PCDH_brain<-subset(Trans_meQTL_PCDH_brain_validation,SNP=="2.174235962_T")
+rownames(rs12621984_CDCA7_PCDH_brain)<-rs12621984_CDCA7_PCDH_brain$gene
+rs12621984_CDCA7_PCDH_brain<-rs12621984_CDCA7_PCDH_brain[dat_mean_BDR_PCDH$CpG,]
+rs12621984_CDCA7_PCDH_brain$beta<-rs12621984_CDCA7_PCDH_brain$beta/dat_mean_BDR_PCDH$sd
+rs12621984_CDCA7_PCDH_brain$Position<-dat_mean_BDR_PCDH$Start+1
+rs12621984_CDCA7_PCDH_brain$Symbol<-dat_mean_BDR_PCDH$Symbol
+rs12621984_CDCA7_PCDH_brain$Tissue<-"Brain"
+colnames(rs12621984_CDCA7_PCDH_brain)[5]<-"pvalue"
+rownames(rs12621984_CDCA7_PCDH_brain)<-NULL
+save(rs12621984_CDCA7_PCDH_blood,rs12621984_CDCA7_PCDH_brain,file = "Output_04_CDCA7_variant_PCDH_blood_brain.RData")
+```
+
+```{r}
+# Check CDCA7 statistical significance consistency between blood and brain
+rs12621984_CDCA7_PCDH_blood<-rs12621984_CDCA7_PCDH_blood[,-c(4,5)]
+rs12621984_CDCA7_PCDH_blood$col<-ifelse(rs12621984_CDCA7_PCDH_blood$p.adj<0.05,"FDR significant in blood","FDR not significant in blood")
+colnames(rs12621984_CDCA7_PCDH_blood)[4]<-"pvalue"
+
+rs12621984_CDCA7_PCDH_brain<-rs12621984_CDCA7_PCDH_brain[,-4]
+rs12621984_CDCA7_PCDH_brain$col<-ifelse(rs12621984_CDCA7_PCDH_brain$pvalue<0.05,"Nominal p-value significant in brain","Nominal p-value not significant in brain")
+
+rs12621984_CDCA7_PCDH_blood_brain<-rbind(rs12621984_CDCA7_PCDH_blood,rs12621984_CDCA7_PCDH_brain)
+rs12621984_CDCA7_PCDH_blood_brain$col<-factor(rs12621984_CDCA7_PCDH_blood_brain$col,levels=c("FDR significant in blood","FDR not significant in blood","Nominal p-value significant in brain","Nominal p-value not significant in brain"))
+save(rs12621984_CDCA7_PCDH_blood_brain,file = "Output_04_rs12621984_CDCA7_PCDH_blood_brain.RData")
+
+# Check CDCA7 effect size consistency between blood and brain
+id_overlap<-intersect(rs12621984_CDCA7_PCDH_blood$gene,rs12621984_CDCA7_PCDH_brain$gene)
+rs12621984_CDCA7_PCDH_blood_brain_overlap<-subset(rs12621984_CDCA7_PCDH_blood_brain,gene%in%id_overlap)
+rs12621984_CDCA7_PCDH_blood_overlap<-subset(rs12621984_CDCA7_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs12621984_CDCA7_PCDH_brain_overlap<-subset(rs12621984_CDCA7_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs12621984_CDCA7_PCDH_blood_overlap$Significance<-ifelse(rs12621984_CDCA7_PCDH_blood_overlap$col=="FDR not significant in blood"&rs12621984_CDCA7_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Neither",ifelse(rs12621984_CDCA7_PCDH_blood_overlap$col=="FDR significant in blood"&rs12621984_CDCA7_PCDH_brain_overlap$col=="Nominal p-value significant in brain","Blood & Brain",ifelse(rs12621984_CDCA7_PCDH_blood_overlap$col=="FDR significant in blood"&rs12621984_CDCA7_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Blood only","Brain only")))
+
+rs12621984_CDCA7_PCDH_brain_overlap$Significance<-rs12621984_CDCA7_PCDH_blood_overlap$Significance
+rs12621984_CDCA7_PCDH_blood_brain_overlap<-rbind(rs12621984_CDCA7_PCDH_blood_overlap,rs12621984_CDCA7_PCDH_brain_overlap)
+save(rs12621984_CDCA7_PCDH_blood_brain_overlap,file = "Output_04_rs12621984_CDCA7_PCDH_blood_brain_overlap.RData")    
+
+rs12621984_CDCA7_PCDH_blood_overlap<-filter(rs12621984_CDCA7_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs12621984_CDCA7_PCDH_brain_overlap<-filter(rs12621984_CDCA7_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs12621984_CDCA7_PCDH_blood_brain_overlap_es<-data.frame(CpG=rs12621984_CDCA7_PCDH_blood_overlap$gene,blood.es=rs12621984_CDCA7_PCDH_blood_overlap$beta,brain.es=rs12621984_CDCA7_PCDH_brain_overlap$beta,Symbol=rs12621984_CDCA7_PCDH_blood_overlap$Symbol,Significance=rs12621984_CDCA7_PCDH_blood_overlap$Significance) 
+save(rs12621984_CDCA7_PCDH_blood_brain_overlap_es,file = "Output_04_rs12621984_CDCA7_PCDH_blood_brain_overlap_es.RData")  
+```
+
+```{r}
+# Test effect of RAD21 locus (chr8:117858173-117887105) on PCDH methylation,50kb window around this gene.
+### BIOS blood
+gr_RAD21<-GRanges(seqnames="chr8",ranges=IRanges(start =  117808173, end = 117937105))
+gr_chr8<-GRanges(seqnames="chr8",ranges=IRanges(start = SimesPValue_chr8$Position, end = SimesPValue_chr8$Position))
+gr_RAD21_snps<-subsetByOverlaps(gr_chr8, gr_RAD21)
+gr_RAD21_snps<-as.data.frame(gr_RAD21_snps)
+gr_RAD21_snps$symbol<-paste("8:",gr_RAD21_snps$start,sep = "")
+
+RAD21_BIOS_dosages<-dosages[gr_RAD21_snps$symbol,]
+
+# Prepare covariates data
+cvrt<-t(model.matrix(~.,data=cvrt)[,-1])
+cvrt = SlicedData$new(cvrt)
+M = SlicedData$new(RIN.mvalues_PCDH)
+geno = SlicedData$new(RAD21_BIOS_dosages)
+
+# Running models and keep t-statistics between SNP-CpG pairs
+me = Matrix_eQTL_engine(
+            snps = geno,
+            gene = M,
+            cvrt = cvrt,
+            output_file_name = NULL,
+            pvOutputThreshold = 1,
+            useModel = modelLINEAR,
+            errorCovariance = numeric(),
+            verbose = TRUE,
+            pvalue.hist = FALSE,
+            min.pv.by.genesnp = FALSE,
+            noFDRsaveMemory = FALSE
+        )
+
+dat_meQTL_PCDH_RAD21<-me$all$eqtls
+dat_meQTL_PCDH_RAD21<-dat_meQTL_PCDH_RAD21[,c("snps","gene","beta","statistic","pvalue")]
+colnames(dat_meQTL_PCDH_RAD21)[4]<-"t-satistics"
+
+# Doing multiple testing correction for 607 Pvalues per SNP
+simes = function (q,n) {
+    q = sort(q)
+    S = n /(1:length(q))  
+    min(min(q*S), 1)  
+}
+
+SimesPValue_RAD21_locus<-tapply(dat_meQTL_PCDH_RAD21$pvalue,dat_meQTL_PCDH_RAD21$snps,simes,n=607)
+SimesPValue_RAD21_locus<-as.data.frame(SimesPValue_RAD21_locus)
+SimesPValue_RAD21_locus$Position<-as.numeric(gsub("^.*[:]", "", rownames(SimesPValue_RAD21_locus)))
+
+# check top SNP(rs71530839)
+rs71530839_RAD21_PCDH_blood<-filter(dat_meQTL_PCDH_RAD21,snps=="8:117810524")
+rownames(rs71530839_RAD21_PCDH_blood)<-rs71530839_RAD21_PCDH_blood$gene
+ann450K_PCDH<-as.data.frame(ann450K_PCDH)
+rs71530839_RAD21_PCDH_blood<-rs71530839_RAD21_PCDH_blood[rownames(ann450K_PCDH),]
+rs71530839_RAD21_PCDH_blood$p.adj<-p.adjust(rs71530839_RAD21_PCDH_blood$pvalue,method="BH")
+rs71530839_RAD21_PCDH_blood$Position<-ann450K_PCDH$start
+rs71530839_RAD21_PCDH_blood$Symbol<-ann450K_PCDH$Symbol
+rs71530839_RAD21_PCDH_blood$Tissue<-"Blood"
+colnames(rs71530839_RAD21_PCDH_blood)[1]<-"SNP"
+rownames(rs71530839_RAD21_PCDH_blood)<-NULL
+
+### BDR brain
+rs71530839_RAD21_PCDH_brain<-subset(Trans_meQTL_PCDH_brain_validation,SNP=="8.117810524_A")
+rownames(rs71530839_RAD21_PCDH_brain)<-rs71530839_RAD21_PCDH_brain$gene
+rs71530839_RAD21_PCDH_brain<-rs71530839_RAD21_PCDH_brain[dat_mean_BDR_PCDH$CpG,]
+rs71530839_RAD21_PCDH_brain$beta<-rs71530839_RAD21_PCDH_brain$beta/dat_mean_BDR_PCDH$sd
+rs71530839_RAD21_PCDH_brain$Position<-dat_mean_BDR_PCDH$Start+1
+rs71530839_RAD21_PCDH_brain$Symbol<-dat_mean_BDR_PCDH$Symbol
+rs71530839_RAD21_PCDH_brain$Tissue<-"Brain"
+colnames(rs71530839_RAD21_PCDH_brain)[5]<-"pvalue"
+rownames(rs71530839_RAD21_PCDH_brain)<-NULL
+save(rs71530839_RAD21_PCDH_blood,rs71530839_RAD21_PCDH_brain,file = "Output_04_RAD21_variant_PCDH_blood_brain.RData")
+```
+
+```{r}
+# Check RAD21 statistical significance consistency between blood and brain
+rs71530839_RAD21_PCDH_blood<-rs71530839_RAD21_PCDH_blood[,-c(4,5)]
+rs71530839_RAD21_PCDH_blood$col<-ifelse(rs71530839_RAD21_PCDH_blood$p.adj<0.05,"FDR significant in blood","FDR not significant in blood")
+colnames(rs71530839_RAD21_PCDH_blood)[4]<-"pvalue"
+
+rs71530839_RAD21_PCDH_brain<-rs71530839_RAD21_PCDH_brain[,-4]
+rs71530839_RAD21_PCDH_brain$col<-ifelse(rs71530839_RAD21_PCDH_brain$pvalue<0.05,"Nominal p-value significant in brain","Nominal p-value not significant in brain")
+
+rs71530839_RAD21_PCDH_blood_brain<-rbind(rs71530839_RAD21_PCDH_blood,rs71530839_RAD21_PCDH_brain)
+rs71530839_RAD21_PCDH_blood_brain$col<-factor(rs71530839_RAD21_PCDH_blood_brain$col,levels=c("FDR significant in blood","FDR not significant in blood","Nominal p-value significant in brain","Nominal p-value not significant in brain"))
+save(rs71530839_RAD21_PCDH_blood_brain,file = "Output_04_rs71530839_RAD21_PCDH_blood_brain.RData")
+
+# Check RAD21 effect size consistency between blood and brain
+id_overlap<-intersect(rs71530839_RAD21_PCDH_blood$gene,rs71530839_RAD21_PCDH_brain$gene)
+rs71530839_RAD21_PCDH_blood_brain_overlap<-subset(rs71530839_RAD21_PCDH_blood_brain,gene%in%id_overlap)
+rs71530839_RAD21_PCDH_blood_overlap<-subset(rs71530839_RAD21_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs71530839_RAD21_PCDH_brain_overlap<-subset(rs71530839_RAD21_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs71530839_RAD21_PCDH_blood_overlap$Significance<-ifelse(rs71530839_RAD21_PCDH_blood_overlap$col=="FDR not significant in blood"&rs71530839_RAD21_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Neither",ifelse(rs71530839_RAD21_PCDH_blood_overlap$col=="FDR significant in blood"&rs71530839_RAD21_PCDH_brain_overlap$col=="Nominal p-value significant in brain","Blood & Brain",ifelse(rs71530839_RAD21_PCDH_blood_overlap$col=="FDR significant in blood"&rs71530839_RAD21_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Blood only","Brain only")))
+
+rs71530839_RAD21_PCDH_brain_overlap$Significance<-rs71530839_RAD21_PCDH_blood_overlap$Significance
+rs71530839_RAD21_PCDH_blood_brain_overlap<-rbind(rs71530839_RAD21_PCDH_blood_overlap,rs71530839_RAD21_PCDH_brain_overlap)
+save(rs71530839_RAD21_PCDH_blood_brain_overlap,file = "Output_04_rs71530839_RAD21_PCDH_blood_brain_overlap.RData")    
+
+rs71530839_RAD21_PCDH_blood_overlap<-filter(rs71530839_RAD21_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs71530839_RAD21_PCDH_brain_overlap<-filter(rs71530839_RAD21_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs71530839_RAD21_PCDH_blood_brain_overlap_es<-data.frame(CpG=rs71530839_RAD21_PCDH_blood_overlap$gene,blood.es=rs71530839_RAD21_PCDH_blood_overlap$beta,brain.es=rs71530839_RAD21_PCDH_brain_overlap$beta,Symbol=rs71530839_RAD21_PCDH_blood_overlap$Symbol,Significance=rs71530839_RAD21_PCDH_blood_overlap$Significance) 
+save(rs71530839_RAD21_PCDH_blood_brain_overlap_es,file = "Output_04_rs71530839_RAD21_PCDH_blood_brain_overlap_es.RData")
+```
+
+```{r}
+# Test effect of CTCF locus (chr16:67596310-67673088) on PCDH methylation,50kb window around this gene.
+### BIOS blood
+gr_CTCF<-GRanges(seqnames="chr16",ranges=IRanges(start =  67546310, end = 67723088))
+gr_chr16<-GRanges(seqnames="chr16",ranges=IRanges(start = SimesPValue_chr16$Position, end = SimesPValue_chr16$Position))
+gr_CTCF_snps<-subsetByOverlaps(gr_chr16, gr_CTCF)
+gr_CTCF_snps<-as.data.frame(gr_CTCF_snps)
+gr_CTCF_snps$symbol<-paste("16:",gr_CTCF_snps$start,sep = "")
+
+CTCF_BIOS_dosages<-dosages[gr_CTCF_snps$symbol,]
+
+# Prepare covariates data
+cvrt<-t(model.matrix(~.,data=cvrt)[,-1])
+cvrt = SlicedData$new(cvrt)
+M = SlicedData$new(RIN.mvalues_PCDH)
+geno = SlicedData$new(CTCF_BIOS_dosages)
+
+# Running models and keep t-statistics between SNP-CpG pairs
+me = Matrix_eQTL_engine(
+            snps = geno,
+            gene = M,
+            cvrt = cvrt,
+            output_file_name = NULL,
+            pvOutputThreshold = 1,
+            useModel = modelLINEAR,
+            errorCovariance = numeric(),
+            verbose = TRUE,
+            pvalue.hist = FALSE,
+            min.pv.by.genesnp = FALSE,
+            noFDRsaveMemory = FALSE
+        )
+
+dat_meQTL_PCDH_CTCF<-me$all$eqtls
+dat_meQTL_PCDH_CTCF<-dat_meQTL_PCDH_CTCF[,c("snps","gene","beta","statistic","pvalue")]
+colnames(dat_meQTL_PCDH_CTCF)[4]<-"t-satistics"
+
+# Doing multiple testing correction for 607 Pvalues per SNP
+simes = function (q,n) {
+    q = sort(q)
+    S = n /(1:length(q))  
+    min(min(q*S), 1)  
+}
+
+SimesPValue_CTCF_locus<-tapply(dat_meQTL_PCDH_CTCF$pvalue,dat_meQTL_PCDH_CTCF$snps,simes,n=607)
+SimesPValue_CTCF_locus<-as.data.frame(SimesPValue_CTCF_locus)
+SimesPValue_CTCF_locus$Position<-as.numeric(gsub("^.*[:]", "", rownames(SimesPValue_CTCF_locus)))
+
+# check top SNP(rs28711261)
+rs28711261_CTCF_PCDH_blood<-filter(dat_meQTL_PCDH_CTCF,snps=="16:67617186")
+rownames(rs28711261_CTCF_PCDH_blood)<-rs28711261_CTCF_PCDH_blood$gene
+ann450K_PCDH<-as.data.frame(ann450K_PCDH)
+rs28711261_CTCF_PCDH_blood<-rs28711261_CTCF_PCDH_blood[rownames(ann450K_PCDH),]
+rs28711261_CTCF_PCDH_blood$p.adj<-p.adjust(rs28711261_CTCF_PCDH_blood$pvalue,method="BH")
+rs28711261_CTCF_PCDH_blood$Position<-ann450K_PCDH$start
+rs28711261_CTCF_PCDH_blood$Symbol<-ann450K_PCDH$Symbol
+rs28711261_CTCF_PCDH_blood$Tissue<-"Blood"
+colnames(rs28711261_CTCF_PCDH_blood)[1]<-"SNP"
+rownames(rs28711261_CTCF_PCDH_blood)<-NULL
+
+### BDR brain
+rs28711261_CTCF_PCDH_brain<-subset(Trans_meQTL_PCDH_brain_validation,SNP=="16.67617186_G")
+rownames(rs28711261_CTCF_PCDH_brain)<-rs28711261_CTCF_PCDH_brain$gene
+rs28711261_CTCF_PCDH_brain<-rs28711261_CTCF_PCDH_brain[dat_mean_BDR_PCDH$CpG,]
+rs28711261_CTCF_PCDH_brain$beta<-rs28711261_CTCF_PCDH_brain$beta/dat_mean_BDR_PCDH$sd
+rs28711261_CTCF_PCDH_brain$Position<-dat_mean_BDR_PCDH$Start+1
+rs28711261_CTCF_PCDH_brain$Symbol<-dat_mean_BDR_PCDH$Symbol
+rs28711261_CTCF_PCDH_brain$Tissue<-"Brain"
+colnames(rs28711261_CTCF_PCDH_brain)[5]<-"pvalue"
+rownames(rs28711261_CTCF_PCDH_brain)<-NULL
+save(rs28711261_CTCF_PCDH_blood,rs28711261_CTCF_PCDH_brain,file = "Output_04_CTCF_variant_PCDH_blood_brain.RData")
+```
+
+```{r}
+# Check CTCF statistical significance consistency between blood and brain
+rs28711261_CTCF_PCDH_blood<-rs28711261_CTCF_PCDH_blood[,-c(4,5)]
+rs28711261_CTCF_PCDH_blood$col<-ifelse(rs28711261_CTCF_PCDH_blood$p.adj<0.05,"FDR significant in blood","FDR not significant in blood")
+colnames(rs28711261_CTCF_PCDH_blood)[4]<-"pvalue"
+
+rs28711261_CTCF_PCDH_brain<-rs28711261_CTCF_PCDH_brain[,-4]
+rs28711261_CTCF_PCDH_brain$col<-ifelse(rs28711261_CTCF_PCDH_brain$pvalue<0.05,"Nominal p-value significant in brain","Nominal p-value not significant in brain")
+
+rs28711261_CTCF_PCDH_blood_brain<-rbind(rs28711261_CTCF_PCDH_blood,rs28711261_CTCF_PCDH_brain)
+rs28711261_CTCF_PCDH_blood_brain$col<-factor(rs28711261_CTCF_PCDH_blood_brain$col,levels=c("FDR significant in blood","FDR not significant in blood","Nominal p-value significant in brain","Nominal p-value not significant in brain"))
+save(rs28711261_CTCF_PCDH_blood_brain,file = "Output_04_rs28711261_CTCF_PCDH_blood_brain.RData")
+
+# Check CTCF effect size consistency between blood and brain
+id_overlap<-intersect(rs28711261_CTCF_PCDH_blood$gene,rs28711261_CTCF_PCDH_brain$gene)
+rs28711261_CTCF_PCDH_blood_brain_overlap<-subset(rs28711261_CTCF_PCDH_blood_brain,gene%in%id_overlap)
+rs28711261_CTCF_PCDH_blood_overlap<-subset(rs28711261_CTCF_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs28711261_CTCF_PCDH_brain_overlap<-subset(rs28711261_CTCF_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs28711261_CTCF_PCDH_blood_overlap$Significance<-ifelse(rs28711261_CTCF_PCDH_blood_overlap$col=="FDR not significant in blood"&rs28711261_CTCF_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Neither",ifelse(rs28711261_CTCF_PCDH_blood_overlap$col=="FDR significant in blood"&rs28711261_CTCF_PCDH_brain_overlap$col=="Nominal p-value significant in brain","Blood & Brain",ifelse(rs28711261_CTCF_PCDH_blood_overlap$col=="FDR significant in blood"&rs28711261_CTCF_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Blood only","Brain only")))
+
+rs28711261_CTCF_PCDH_brain_overlap$Significance<-rs28711261_CTCF_PCDH_blood_overlap$Significance
+rs28711261_CTCF_PCDH_blood_brain_overlap<-rbind(rs28711261_CTCF_PCDH_blood_overlap,rs28711261_CTCF_PCDH_brain_overlap)
+save(rs28711261_CTCF_PCDH_blood_brain_overlap,file = "Output_04_rs28711261_CTCF_PCDH_blood_brain_overlap.RData")    
+
+rs28711261_CTCF_PCDH_blood_overlap<-filter(rs28711261_CTCF_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs28711261_CTCF_PCDH_brain_overlap<-filter(rs28711261_CTCF_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs28711261_CTCF_PCDH_blood_brain_overlap_es<-data.frame(CpG=rs28711261_CTCF_PCDH_blood_overlap$gene,blood.es=rs28711261_CTCF_PCDH_blood_overlap$beta,brain.es=rs28711261_CTCF_PCDH_brain_overlap$beta,Symbol=rs28711261_CTCF_PCDH_blood_overlap$Symbol,Significance=rs28711261_CTCF_PCDH_blood_overlap$Significance) 
+save(rs28711261_CTCF_PCDH_blood_brain_overlap_es,file = "Output_04_rs28711261_CTCF_PCDH_blood_brain_overlap_es.RData")
+```
+
+```{r}
+# Test effect of WIZ locus (chr19:15530789-15560767) on PCDH methylation,50kb window around this gene.
+### BIOS blood
+gr_WIZ<-GRanges(seqnames="chr19",ranges=IRanges(start =  15480789, end = 15610767))
+gr_chr19<-GRanges(seqnames="chr19",ranges=IRanges(start = SimesPValue_chr19$Position, end = SimesPValue_chr19$Position))
+gr_WIZ_snps<-subsetByOverlaps(gr_chr19, gr_WIZ)
+gr_WIZ_snps<-as.data.frame(gr_WIZ_snps)
+gr_WIZ_snps$symbol<-paste("19:",gr_WIZ_snps$start,sep = "")
+
+WIZ_BIOS_dosages<-dosages[gr_WIZ_snps$symbol,]
+
+# Prepare covariates data
+cvrt<-t(model.matrix(~.,data=cvrt)[,-1])
+cvrt = SlicedData$new(cvrt)
+M = SlicedData$new(RIN.mvalues_PCDH)
+geno = SlicedData$new(WIZ_BIOS_dosages)
+
+# Running models and keep t-statistics between SNP-CpG pairs
+me = Matrix_eQTL_engine(
+            snps = geno,
+            gene = M,
+            cvrt = cvrt,
+            output_file_name = NULL,
+            pvOutputThreshold = 1,
+            useModel = modelLINEAR,
+            errorCovariance = numeric(),
+            verbose = TRUE,
+            pvalue.hist = FALSE,
+            min.pv.by.genesnp = FALSE,
+            noFDRsaveMemory = FALSE
+        )
+
+dat_meQTL_PCDH_WIZ<-me$all$eqtls
+dat_meQTL_PCDH_WIZ<-dat_meQTL_PCDH_WIZ[,c("snps","gene","beta","statistic","pvalue")]
+colnames(dat_meQTL_PCDH_WIZ)[4]<-"t-satistics"
+
+# Doing multiple testing correction for 607 Pvalues per SNP
+simes = function (q,n) {
+    q = sort(q)
+    S = n /(1:length(q))  
+    min(min(q*S), 1)  
+}
+
+SimesPValue_WIZ_locus<-tapply(dat_meQTL_PCDH_WIZ$pvalue,dat_meQTL_PCDH_WIZ$snps,simes,n=607)
+SimesPValue_WIZ_locus<-as.data.frame(SimesPValue_WIZ_locus)
+SimesPValue_WIZ_locus$Position<-as.numeric(gsub("^.*[:]", "", rownames(SimesPValue_WIZ_locus)))
+
+# check top SNP(rs60992867)
+rs60992867_WIZ_PCDH_blood<-filter(dat_meQTL_PCDH_WIZ,snps=="19:15594913")
+rownames(rs60992867_WIZ_PCDH_blood)<-rs60992867_WIZ_PCDH_blood$gene
+ann450K_PCDH<-as.data.frame(ann450K_PCDH)
+rs60992867_WIZ_PCDH_blood<-rs60992867_WIZ_PCDH_blood[rownames(ann450K_PCDH),]
+rs60992867_WIZ_PCDH_blood$p.adj<-p.adjust(rs60992867_WIZ_PCDH_blood$pvalue,method="BH")
+rs60992867_WIZ_PCDH_blood$Position<-ann450K_PCDH$start
+rs60992867_WIZ_PCDH_blood$Symbol<-ann450K_PCDH$Symbol
+rs60992867_WIZ_PCDH_blood$Tissue<-"Blood"
+colnames(rs60992867_WIZ_PCDH_blood)[1]<-"SNP"
+rownames(rs60992867_WIZ_PCDH_blood)<-NULL
+
+### BDR brain
+rs60992867_WIZ_PCDH_brain<-subset(Trans_meQTL_PCDH_brain_validation,SNP=="19.15594913_T")
+rownames(rs60992867_WIZ_PCDH_brain)<-rs60992867_WIZ_PCDH_brain$gene
+rs60992867_WIZ_PCDH_brain<-rs60992867_WIZ_PCDH_brain[dat_mean_BDR_PCDH$CpG,]
+rs60992867_WIZ_PCDH_brain$beta<-rs60992867_WIZ_PCDH_brain$beta/dat_mean_BDR_PCDH$sd
+rs60992867_WIZ_PCDH_brain$Position<-dat_mean_BDR_PCDH$Start+1
+rs60992867_WIZ_PCDH_brain$Symbol<-dat_mean_BDR_PCDH$Symbol
+rs60992867_WIZ_PCDH_brain$Tissue<-"Brain"
+colnames(rs60992867_WIZ_PCDH_brain)[5]<-"pvalue"
+rownames(rs60992867_WIZ_PCDH_brain)<-NULL
+save(rs60992867_WIZ_PCDH_blood,rs60992867_WIZ_PCDH_brain,file = "Output_04_WIZ_variant_PCDH_blood_brain.RData")
+```
+
+```{r}
+# Check WIZ statistical significance consistency between blood and brain
+rs60992867_WIZ_PCDH_blood<-rs60992867_WIZ_PCDH_blood[,-c(4,5)]
+rs60992867_WIZ_PCDH_blood$col<-ifelse(rs60992867_WIZ_PCDH_blood$p.adj<0.05,"FDR significant in blood","FDR not significant in blood")
+colnames(rs60992867_WIZ_PCDH_blood)[4]<-"pvalue"
+
+rs60992867_WIZ_PCDH_brain<-rs60992867_WIZ_PCDH_brain[,-4]
+rs60992867_WIZ_PCDH_brain$col<-ifelse(rs60992867_WIZ_PCDH_brain$pvalue<0.05,"Nominal p-value significant in brain","Nominal p-value not significant in brain")
+
+rs60992867_WIZ_PCDH_blood_brain<-rbind(rs60992867_WIZ_PCDH_blood,rs60992867_WIZ_PCDH_brain)
+rs60992867_WIZ_PCDH_blood_brain$col<-factor(rs60992867_WIZ_PCDH_blood_brain$col,levels=c("FDR significant in blood","FDR not significant in blood","Nominal p-value significant in brain","Nominal p-value not significant in brain"))
+save(rs60992867_WIZ_PCDH_blood_brain,file = "Output_04_rs60992867_WIZ_PCDH_blood_brain.RData")
+
+# Check WIZ effect size consistency between blood and brain
+id_overlap<-intersect(rs60992867_WIZ_PCDH_blood$gene,rs60992867_WIZ_PCDH_brain$gene)
+rs60992867_WIZ_PCDH_blood_brain_overlap<-subset(rs60992867_WIZ_PCDH_blood_brain,gene%in%id_overlap)
+rs60992867_WIZ_PCDH_blood_overlap<-subset(rs60992867_WIZ_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs60992867_WIZ_PCDH_brain_overlap<-subset(rs60992867_WIZ_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs60992867_WIZ_PCDH_blood_overlap$Significance<-ifelse(rs60992867_WIZ_PCDH_blood_overlap$col=="FDR not significant in blood"&rs60992867_WIZ_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Neither",ifelse(rs60992867_WIZ_PCDH_blood_overlap$col=="FDR significant in blood"&rs60992867_WIZ_PCDH_brain_overlap$col=="Nominal p-value significant in brain","Blood & Brain",ifelse(rs60992867_WIZ_PCDH_blood_overlap$col=="FDR significant in blood"&rs60992867_WIZ_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Blood only","Brain only")))
+
+rs60992867_WIZ_PCDH_brain_overlap$Significance<-rs60992867_WIZ_PCDH_blood_overlap$Significance
+rs60992867_WIZ_PCDH_blood_brain_overlap<-rbind(rs60992867_WIZ_PCDH_blood_overlap,rs60992867_WIZ_PCDH_brain_overlap)
+save(rs60992867_WIZ_PCDH_blood_brain_overlap,file = "Output_04_rs60992867_WIZ_PCDH_blood_brain_overlap.RData")    
+
+rs60992867_WIZ_PCDH_blood_overlap<-filter(rs60992867_WIZ_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs60992867_WIZ_PCDH_brain_overlap<-filter(rs60992867_WIZ_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs60992867_WIZ_PCDH_blood_brain_overlap_es<-data.frame(CpG=rs60992867_WIZ_PCDH_blood_overlap$gene,blood.es=rs60992867_WIZ_PCDH_blood_overlap$beta,brain.es=rs60992867_WIZ_PCDH_brain_overlap$beta,Symbol=rs60992867_WIZ_PCDH_blood_overlap$Symbol,Significance=rs60992867_WIZ_PCDH_blood_overlap$Significance) 
+save(rs60992867_WIZ_PCDH_blood_brain_overlap_es,file = "Output_04_rs60992867_WIZ_PCDH_blood_brain_overlap_es.RData")
+```
+
+```{r}
+# Test effect of DNMT3B locus (chr20:31350191-31397162) on PCDH methylation,50kb window around this gene.
+### BIOS blood
+gr_DNMT3B<-GRanges(seqnames="chr20",ranges=IRanges(start =  31300191, end = 31447162))
+gr_chr20<-GRanges(seqnames="chr20",ranges=IRanges(start = SimesPValue_chr20$Position, end = SimesPValue_chr20$Position))
+gr_DNMT3B_snps<-subsetByOverlaps(gr_chr20, gr_DNMT3B)
+gr_DNMT3B_snps<-as.data.frame(gr_DNMT3B_snps)
+gr_DNMT3B_snps$symbol<-paste("20:",gr_DNMT3B_snps$start,sep = "")
+
+DNMT3B_BIOS_dosages<-dosages[gr_DNMT3B_snps$symbol,]
+
+# Prepare covariates data
+cvrt<-t(model.matrix(~.,data=cvrt)[,-1])
+cvrt = SlicedData$new(cvrt)
+M = SlicedData$new(RIN.mvalues_PCDH)
+geno = SlicedData$new(DNMT3B_BIOS_dosages)
+
+# Running models and keep t-statistics between SNP-CpG pairs
+me = Matrix_eQTL_engine(
+            snps = geno,
+            gene = M,
+            cvrt = cvrt,
+            output_file_name = NULL,
+            pvOutputThreshold = 1,
+            useModel = modelLINEAR,
+            errorCovariance = numeric(),
+            verbose = TRUE,
+            pvalue.hist = FALSE,
+            min.pv.by.genesnp = FALSE,
+            noFDRsaveMemory = FALSE
+        )
+
+dat_meQTL_PCDH_DNMT3B<-me$all$eqtls
+dat_meQTL_PCDH_DNMT3B<-dat_meQTL_PCDH_DNMT3B[,c("snps","gene","beta","statistic","pvalue")]
+colnames(dat_meQTL_PCDH_DNMT3B)[4]<-"t-satistics"
+
+# Doing multiple testing correction for 607 Pvalues per SNP
+simes = function (q,n) {
+    q = sort(q)
+    S = n /(1:length(q))  
+    min(min(q*S), 1)  
+}
+
+SimesPValue_DNMT3B_locus<-tapply(dat_meQTL_PCDH_DNMT3B$pvalue,dat_meQTL_PCDH_DNMT3B$snps,simes,n=607)
+SimesPValue_DNMT3B_locus<-as.data.frame(SimesPValue_DNMT3B_locus)
+SimesPValue_DNMT3B_locus$Position<-as.numeric(gsub("^.*[:]", "", rownames(SimesPValue_DNMT3B_locus)))
+
+# check top SNP(rs3746386)
+rs3746386_DNMT3B_PCDH_blood<-filter(dat_meQTL_PCDH_DNMT3B,snps=="20:31446742")
+rownames(rs3746386_DNMT3B_PCDH_blood)<-rs3746386_DNMT3B_PCDH_blood$gene
+ann450K_PCDH<-as.data.frame(ann450K_PCDH)
+rs3746386_DNMT3B_PCDH_blood<-rs3746386_DNMT3B_PCDH_blood[rownames(ann450K_PCDH),]
+rs3746386_DNMT3B_PCDH_blood$p.adj<-p.adjust(rs3746386_DNMT3B_PCDH_blood$pvalue,method="BH")
+rs3746386_DNMT3B_PCDH_blood$Position<-ann450K_PCDH$start
+rs3746386_DNMT3B_PCDH_blood$Symbol<-ann450K_PCDH$Symbol
+rs3746386_DNMT3B_PCDH_blood$Tissue<-"Blood"
+colnames(rs3746386_DNMT3B_PCDH_blood)[1]<-"SNP"
+rownames(rs3746386_DNMT3B_PCDH_blood)<-NULL
+
+### BDR brain
+rs3746386_DNMT3B_PCDH_brain<-subset(Trans_meQTL_PCDH_brain_validation,SNP=="20.31446742_C")
+rownames(rs3746386_DNMT3B_PCDH_brain)<-rs3746386_DNMT3B_PCDH_brain$gene
+rs3746386_DNMT3B_PCDH_brain<-rs3746386_DNMT3B_PCDH_brain[dat_mean_BDR_PCDH$CpG,]
+rs3746386_DNMT3B_PCDH_brain$beta<-rs3746386_DNMT3B_PCDH_brain$beta/dat_mean_BDR_PCDH$sd
+rs3746386_DNMT3B_PCDH_brain$Position<-dat_mean_BDR_PCDH$Start+1
+rs3746386_DNMT3B_PCDH_brain$Symbol<-dat_mean_BDR_PCDH$Symbol
+rs3746386_DNMT3B_PCDH_brain$Tissue<-"Brain"
+colnames(rs3746386_DNMT3B_PCDH_brain)[5]<-"pvalue"
+rownames(rs3746386_DNMT3B_PCDH_brain)<-NULL
+save(rs3746386_DNMT3B_PCDH_blood,rs3746386_DNMT3B_PCDH_brain,file = "Output_04_DNMT3B_variant_PCDH_blood_brain.RData")
+```
+
+```{r}
+# Check DNMT3B statistical significance consistency between blood and brain
+rs3746386_DNMT3B_PCDH_blood<-rs3746386_DNMT3B_PCDH_blood[,-c(4,5)]
+rs3746386_DNMT3B_PCDH_blood$col<-ifelse(rs3746386_DNMT3B_PCDH_blood$p.adj<0.05,"FDR significant in blood","FDR not significant in blood")
+colnames(rs3746386_DNMT3B_PCDH_blood)[4]<-"pvalue"
+
+rs3746386_DNMT3B_PCDH_brain<-rs3746386_DNMT3B_PCDH_brain[,-4]
+rs3746386_DNMT3B_PCDH_brain$col<-ifelse(rs3746386_DNMT3B_PCDH_brain$pvalue<0.05,"Nominal p-value significant in brain","Nominal p-value not significant in brain")
+
+rs3746386_DNMT3B_PCDH_blood_brain<-rbind(rs3746386_DNMT3B_PCDH_blood,rs3746386_DNMT3B_PCDH_brain)
+rs3746386_DNMT3B_PCDH_blood_brain$col<-factor(rs3746386_DNMT3B_PCDH_blood_brain$col,levels=c("FDR significant in blood","FDR not significant in blood","Nominal p-value significant in brain","Nominal p-value not significant in brain"))
+save(rs3746386_DNMT3B_PCDH_blood_brain,file = "Output_04_rs3746386_DNMT3B_PCDH_blood_brain.RData")
+
+# Check DNMT3B effect size consistency between blood and brain
+id_overlap<-intersect(rs3746386_DNMT3B_PCDH_blood$gene,rs3746386_DNMT3B_PCDH_brain$gene)
+rs3746386_DNMT3B_PCDH_blood_brain_overlap<-subset(rs3746386_DNMT3B_PCDH_blood_brain,gene%in%id_overlap)
+rs3746386_DNMT3B_PCDH_blood_overlap<-subset(rs3746386_DNMT3B_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs3746386_DNMT3B_PCDH_brain_overlap<-subset(rs3746386_DNMT3B_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs3746386_DNMT3B_PCDH_blood_overlap$Significance<-ifelse(rs3746386_DNMT3B_PCDH_blood_overlap$col=="FDR not significant in blood"&rs3746386_DNMT3B_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Neither",ifelse(rs3746386_DNMT3B_PCDH_blood_overlap$col=="FDR significant in blood"&rs3746386_DNMT3B_PCDH_brain_overlap$col=="Nominal p-value significant in brain","Blood & Brain",ifelse(rs3746386_DNMT3B_PCDH_blood_overlap$col=="FDR significant in blood"&rs3746386_DNMT3B_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Blood only","Brain only")))
+
+rs3746386_DNMT3B_PCDH_brain_overlap$Significance<-rs3746386_DNMT3B_PCDH_blood_overlap$Significance
+rs3746386_DNMT3B_PCDH_blood_brain_overlap<-rbind(rs3746386_DNMT3B_PCDH_blood_overlap,rs3746386_DNMT3B_PCDH_brain_overlap)
+save(rs3746386_DNMT3B_PCDH_blood_brain_overlap,file = "Output_04_rs3746386_DNMT3B_PCDH_blood_brain_overlap.RData")    
+
+rs3746386_DNMT3B_PCDH_blood_overlap<-filter(rs3746386_DNMT3B_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs3746386_DNMT3B_PCDH_brain_overlap<-filter(rs3746386_DNMT3B_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs3746386_DNMT3B_PCDH_blood_brain_overlap_es<-data.frame(CpG=rs3746386_DNMT3B_PCDH_blood_overlap$gene,blood.es=rs3746386_DNMT3B_PCDH_blood_overlap$beta,brain.es=rs3746386_DNMT3B_PCDH_brain_overlap$beta,Symbol=rs3746386_DNMT3B_PCDH_blood_overlap$Symbol,Significance=rs3746386_DNMT3B_PCDH_blood_overlap$Significance) 
+save(rs3746386_DNMT3B_PCDH_blood_brain_overlap_es,file = "Output_04_rs3746386_DNMT3B_PCDH_blood_brain_overlap_es.RData")
+```
+
+```{r}
+# Comparing effect consistency of 6 candidate gene loci in blood and brain.
+scaleFUN <- function(x) sprintf("%.1f", x)
+
+# SMCHD1
+rs10775431_SMCHD1_PCDH_blood_brain_overlap_es$brain.es<- rs10775431_SMCHD1_PCDH_blood_brain_overlap_es$brain.es*-1 
+rs10775431_SMCHD1_PCDH_blood_brain_overlap_es$loci<-"SMCHD1"
+rs10775431_SMCHD1_PCDH_blood_brain_overlap_es$Significance<-factor(rs10775431_SMCHD1_PCDH_blood_brain_overlap_es$Significance,levels = c("Blood & Brain","Blood only","Brain only","Neither"))
+
+P1_SMCHD1<-ggplot(rs10775431_SMCHD1_PCDH_blood_brain_overlap_es) +
+          aes(x=blood.es,y=brain.es,color=Significance) +
+          geom_point(size=3, alpha = 0.7) +
+          geom_vline(aes(xintercept=0)) +
+          geom_hline(aes(yintercept=0)) +
+          geom_abline(slope=1, intercept = 0)+
+          scale_x_continuous(limits=c(-0.3, 0.3),labels = scaleFUN)+
+          scale_y_continuous(limits=c(-0.3, 0.3),labels = scaleFUN)+
+          scale_color_manual(values=c("#1FA759","#E76254","#56B4E9","#E9E7E8"))+
+          facet_wrap(~loci,scales = "fixed") +
+          theme_bw() +
+          theme(legend.position="none",axis.title.x =element_text(size = 35),axis.title.y = element_text(size = 35),axis.text.x = element_text(size = 35,angle = 45,hjust = 1),axis.text.y = element_text(size = 35),strip.text.x = element_text(size = 38))+ 
+   labs(x="",y="") 
+
+# CDCA7
+rs12621984_CDCA7_PCDH_blood_brain_overlap_es$brain.es<- rs12621984_CDCA7_PCDH_blood_brain_overlap_es$brain.es*-1 
+rs12621984_CDCA7_PCDH_blood_brain_overlap_es$loci<-"CDCA7"
+rs12621984_CDCA7_PCDH_blood_brain_overlap_es$Significance<-factor(rs12621984_CDCA7_PCDH_blood_brain_overlap_es$Significance,levels = c("Blood only","Brain only","Neither"))
+
+P2_CDCA7<-ggplot(rs12621984_CDCA7_PCDH_blood_brain_overlap_es) +
+          aes(x=blood.es,y=brain.es,color=Significance) +
+          geom_point(size=3, alpha = 0.7) +
+          geom_vline(aes(xintercept=0)) +
+          geom_hline(aes(yintercept=0)) +
+          geom_abline(slope=1, intercept = 0)+
+          scale_x_continuous(limits=c(-0.3, 0.3),labels = scaleFUN)+
+          scale_y_continuous(limits=c(-0.3, 0.3),labels = scaleFUN)+
+          scale_color_manual(values=c("#E76254","#56B4E9","#E9E7E8"))+
+          facet_wrap(~loci,scales = "fixed") +
+          theme_bw() +
+          theme(legend.position="none",axis.title.x =element_text(size = 35),axis.title.y = element_text(size = 35),axis.text.x = element_text(size = 35,angle = 45,hjust = 1),axis.text.y = element_text(size = 35),strip.text.x = element_text(size = 38))+ 
+   labs(x="",y="") 
+
+# RAD21
+rs71530839_RAD21_PCDH_blood_brain_overlap_es$loci<-"RAD21"
+rs71530839_RAD21_PCDH_blood_brain_overlap_es$Significance<-factor(rs71530839_RAD21_PCDH_blood_brain_overlap_es$Significance,levels = c("Blood only","Brain only","Neither"))
+
+P3_RAD21<-ggplot(rs71530839_RAD21_PCDH_blood_brain_overlap_es) +
+          aes(x=blood.es,y=brain.es,color=Significance) +
+          geom_point(size=3, alpha = 0.7) +
+          geom_vline(aes(xintercept=0)) +
+          geom_hline(aes(yintercept=0)) +
+          geom_abline(slope=1, intercept = 0)+
+          scale_x_continuous(limits=c(-0.5, 0.5),labels = scaleFUN)+
+          scale_y_continuous(limits=c(-0.5, 0.5),labels = scaleFUN)+
+          scale_color_manual(values=c("#E76254","#56B4E9","#E9E7E8"))+
+          facet_wrap(~loci,scales = "fixed") +
+          theme_bw() +
+          theme(legend.position="none",axis.title.x =element_text(size = 35),axis.title.y = element_text(size = 35),axis.text.x = element_text(size = 35,angle = 45,hjust = 1),axis.text.y = element_text(size = 35),strip.text.x = element_text(size = 38))+ 
+   labs(x="",y="") 
+
+# WIZ
+rs60992867_WIZ_PCDH_blood_brain_overlap_es$loci<-"WIZ"
+rs60992867_WIZ_PCDH_blood_brain_overlap_es$Significance<-factor(rs60992867_WIZ_PCDH_blood_brain_overlap_es$Significance,levels = c("Blood only","Brain only","Neither"))
+
+P4_WIZ<-ggplot(rs60992867_WIZ_PCDH_blood_brain_overlap_es) +
+          aes(x=blood.es,y=brain.es,color=Significance) +
+          geom_point(size=3, alpha = 0.7) +
+          geom_vline(aes(xintercept=0)) +
+          geom_hline(aes(yintercept=0)) +
+          geom_abline(slope=1, intercept = 0)+
+          scale_x_continuous(limits=c(-0.3, 0.3),labels = scaleFUN)+
+          scale_y_continuous(limits=c(-0.3, 0.3),labels = scaleFUN)+
+          scale_color_manual(values=c("#E76254","#56B4E9","#E9E7E8"))+
+          facet_wrap(~loci,scales = "fixed") +
+          theme_bw() +
+          theme(legend.position="none",axis.title.x =element_text(size = 35),axis.title.y = element_text(size = 35),axis.text.x = element_text(size = 35,angle = 45,hjust = 1),axis.text.y = element_text(size = 35),strip.text.x = element_text(size = 38))+ 
+   labs(x="",y="") 
+
+# DNMT3B
+rs3746386_DNMT3B_PCDH_blood_brain_overlap_es$loci<-"DNMT3B"
+rs3746386_DNMT3B_PCDH_blood_brain_overlap_es$Significance<-factor(rs3746386_DNMT3B_PCDH_blood_brain_overlap_es$Significance,levels = c("Blood & Brain","Blood only","Brain only","Neither"))
+
+P5_DNMT3B<-ggplot(rs3746386_DNMT3B_PCDH_blood_brain_overlap_es) +
+          aes(x=blood.es,y=brain.es,color=Significance) +
+          geom_point(size=3, alpha = 0.7) +
+          geom_vline(aes(xintercept=0)) +
+          geom_hline(aes(yintercept=0)) +
+          geom_abline(slope=1, intercept = 0)+
+          scale_x_continuous(limits=c(-0.4, 0.4),labels = scaleFUN)+
+          scale_y_continuous(limits=c(-0.4, 0.4),labels = scaleFUN)+
+          scale_color_manual(values=c("#1FA759","#E76254","#56B4E9","#E9E7E8"))+
+          facet_wrap(~loci,scales = "fixed") +
+          theme_bw() +
+          theme(legend.position="none",axis.title.x =element_text(size = 35),axis.title.y = element_text(size = 35),axis.text.x = element_text(size = 35,angle = 45,hjust = 1),axis.text.y = element_text(size = 35),strip.text.x = element_text(size = 38))+ 
+   labs(x="",y="") 
+
+# CTCF
+rs28711261_CTCF_PCDH_blood_brain_overlap_es$loci<-"CTCF"
+rs28711261_CTCF_PCDH_blood_brain_overlap_es$Significance<-factor(rs28711261_CTCF_PCDH_blood_brain_overlap_es$Significance,levels = c("Blood & Brain","Blood only","Brain only","Neither"))
+
+P6_CTCF<-ggplot(rs28711261_CTCF_PCDH_blood_brain_overlap_es) +
+          aes(x=blood.es,y=brain.es,color=Significance) +
+          geom_point(size=3, alpha = 0.7) +
+          geom_vline(aes(xintercept=0)) +
+          geom_hline(aes(yintercept=0)) +
+          geom_abline(slope=1, intercept = 0)+
+          scale_x_continuous(limits=c(-0.4, 0.4),labels = scaleFUN)+
+          scale_y_continuous(limits=c(-0.4, 0.4),labels = scaleFUN)+
+          scale_color_manual(values=c("#1FA759","#E76254","#56B4E9","#E9E7E8"))+
+          facet_wrap(~loci,scales = "fixed") +
+          theme_bw() +
+          theme(legend.position="none",axis.title.x =element_text(size = 35),axis.title.y = element_text(size = 35),axis.text.x = element_text(size = 35,angle = 45,hjust = 1),axis.text.y = element_text(size = 35),strip.text.x = element_text(size = 38))+ 
+   labs(x="",y="") 
+
+pdf("Sixloci_PCDH_blood_brain_overlap_es.pdf", width=17, height=12)
+ggarrange(P1_SMCHD1,P2_CDCA7,P3_RAD21,P4_WIZ,P5_DNMT3B,P6_CTCF,nrow=2,ncol=3)
+dev.off()
+```

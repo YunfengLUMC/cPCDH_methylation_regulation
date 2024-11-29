@@ -1,0 +1,2844 @@
+---
+title: "Script_02_Genetic data preparation"
+author: "Yunfeng"
+date: '2024-5-31'
+output: html_document
+---
+
+```{r}
+#set library path.
+.libPaths("/exports/molepi/RSC_BIOS/Users/yliu/Rlibs")
+```
+
+
+```{r}
+## Libraries
+library(BiocParallel)
+library(readr)
+library(stringr)
+library(dplyr)
+```
+
+
+```{r}
+# Read INFO files and select bi-allelic SNPs with Rsq > 0.3
+## Load info file for each biobank/chromosome 
+## Select bi-allelic SNPs (i.e. with no duplicate chr:position)
+## Recalculate MAF by taking the weighted sum of MAFs across biobanks
+path <- "/exports/molepi/RSC_BIOS/RP3_data/HRCv1.1_Imputation/" 
+# For LLS and NTR the samples are measured on two different arrays
+biobanks <- c("CODAM","LL","LLS_660Q","LLS_OmniExpr","NTR_Affy6","NTR_GoNL","PAN","RS") 
+BPPARAM <- MulticoreParam(16)
+
+# Read in info data for each biobank per chromosome and:
+# - Remove duplicates (tri-allelic SNPs)
+# - Select SNPs with Rsq > 0.3 in every biobank
+chrs <- paste("chr",1:22, sep = "")
+for(chr in chrs) {
+	lst <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste0(path, str_replace(biobank, "_", "/"), "/", chr, ".info.gz") 
+		info <- read_tsv(path_biobank, col_types = cols(SNP = "c"), progress = FALSE) # read_tsv is faster than base R read.table
+
+		# Remove duplicates (tri-allelic SNPs) and SNPs with Rsq < 0.3
+		info <- info[!(duplicated(info$SNP) | duplicated(info$SNP, fromLast = TRUE)) &info$Rsq > 0.3,]
+		snps <- info$SNP
+		snps			  
+		}, BPPARAM = BPPARAM)
+	snps_intersect <- Reduce(intersect, lst) # Select SNPs that intersect between biobanks after filtering
+  write.table(snps_intersect, file = sprintf("/exports/molepi/RSC_BIOS/Users/yliu/Protocadherins_gene_cluster/BIOS_genotype/%s_snps_R20.3_biallelic",chr),quote = FALSE, row.names = FALSE, col.names = FALSE)
+}
+```
+
+
+```{r}
+# Because imputation id (hrcv1.1) is not unique between 6 cohorts,so only extract one by one.
+# Extract samples imputation id per cohort.
+mvalues_PCDH_col<-as.data.frame(colData(mvalues_PCDH))
+mvalues_PCDH_hrcv1.1_col<-mvalues_PCDH_col[!is.na(mvalues_PCDH_col$imputation_id_hrcv1.1),]
+mvalues_PCDH_hrcv1.1_col<-mvalues_PCDH_hrcv1.1_col[,c("uuid","biobank_id","sampling_age","sex","gwas_chip","imputation_id_hrc","imputation_id_hrcv1.1")]
+mvalues_PCDH_hrcv1.1<-mvalues_PCDH[,rownames(mvalues_PCDH_hrcv1.1_col)] 
+
+# Modify LL cohort imputation id (Raw id is wrong)
+id_LL<-which(mvalues_PCDH_hrcv1.1_col$biobank_id=="LL")
+mvalues_PCDH_hrcv1.1$imputation_id_hrcv1.1[id_LL]<-substring(mvalues_PCDH_hrcv1.1$imputation_id_hrc[id_LL],10,13)
+
+# Remove some problematic samples and split 6 cohort
+mvalues_PCDH_hrcv1.1_col_CODAM<-filter(mvalues_PCDH_hrcv1.1_col,biobank_id=="CODAM")
+mvalues_PCDH_hrcv1.1_col_CODAM_male<-filter(mvalues_PCDH_hrcv1.1_col_CODAM,sex=="male")
+mvalues_PCDH_hrcv1.1_col_CODAM_female<-filter(mvalues_PCDH_hrcv1.1_col_CODAM,sex=="female")
+write.table(mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_CODAM.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_CODAM_male$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_CODAM_male.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_CODAM_female$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_CODAM_female.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+mvalues_PCDH_hrcv1.1_col_LL<-filter(mvalues_PCDH_hrcv1.1_col,biobank_id=="LL")
+mvalues_PCDH_hrcv1.1_col_LL<-filter(mvalues_PCDH_hrcv1.1_col_LL,!imputation_id_hrcv1.1%in%"1263") # 1263 sample is missing
+mvalues_PCDH_hrcv1.1_col_LL_male<-filter(mvalues_PCDH_hrcv1.1_col_LL,sex=="male")
+mvalues_PCDH_hrcv1.1_col_LL_female<-filter(mvalues_PCDH_hrcv1.1_col_LL,sex=="female")
+write.table(mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_LL.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_LL_male$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_LL_male.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_LL_female$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_LL_female.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+mvalues_PCDH_hrcv1.1_col_LLS<-filter(mvalues_PCDH_hrcv1.1_col,biobank_id=="LLS")
+mvalues_PCDH_hrcv1.1_col_LLS<-filter(mvalues_PCDH_hrcv1.1_col_LLS,!imputation_id_hrcv1.1%in%c("425","563","838","974","1436","2068")) # 6 samples are measured 2 times
+mvalues_PCDH_hrcv1.1_col_LLS_male<-filter(mvalues_PCDH_hrcv1.1_col_LLS,sex=="male")
+mvalues_PCDH_hrcv1.1_col_LLS_female<-filter(mvalues_PCDH_hrcv1.1_col_LLS,sex=="female")
+write.table(mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_LLS.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_LLS_male$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_LLS_male.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_LLS_female$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_LLS_female.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+mvalues_PCDH_hrcv1.1_col_NTR<-filter(mvalues_PCDH_hrcv1.1_col,biobank_id=="NTR")
+mvalues_PCDH_hrcv1.1_col_NTR_male<-filter(mvalues_PCDH_hrcv1.1_col_NTR,sex=="male")
+mvalues_PCDH_hrcv1.1_col_NTR_female<-filter(mvalues_PCDH_hrcv1.1_col_NTR,sex=="female")
+write.table(mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_NTR.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_NTR_male$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_NTR_male.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_NTR_female$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_NTR_female.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+mvalues_PCDH_hrcv1.1_col_PAN<-filter(mvalues_PCDH_hrcv1.1_col,biobank_id=="PAN")
+mvalues_PCDH_hrcv1.1_col_PAN_male<-filter(mvalues_PCDH_hrcv1.1_col_PAN,sex=="male")
+mvalues_PCDH_hrcv1.1_col_PAN_female<-filter(mvalues_PCDH_hrcv1.1_col_PAN,sex=="female")
+write.table(mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_PAN.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_PAN_male$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_PAN_male.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_PAN_female$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_PAN_female.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+mvalues_PCDH_hrcv1.1_col_RS<-filter(mvalues_PCDH_hrcv1.1_col,biobank_id=="RS")
+mvalues_PCDH_hrcv1.1_col_RS_male<-filter(mvalues_PCDH_hrcv1.1_col_RS,sex=="male")
+mvalues_PCDH_hrcv1.1_col_RS_female<-filter(mvalues_PCDH_hrcv1.1_col_RS,sex=="female")
+write.table(mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_RS.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_RS_male$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_RS_male.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+write.table(mvalues_PCDH_hrcv1.1_col_RS_female$imputation_id_hrcv1.1,file = "mvalues_PCDH_hrcv1.1_ids_RS_female.txt",quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+# Combined together
+mvalues_PCDH_hrcv1.1_col<-rbind(mvalues_PCDH_hrcv1.1_col_CODAM,mvalues_PCDH_hrcv1.1_col_LL,mvalues_PCDH_hrcv1.1_col_LLS,mvalues_PCDH_hrcv1.1_col_NTR,mvalues_PCDH_hrcv1.1_col_PAN,mvalues_PCDH_hrcv1.1_col_RS)
+mvalues_PCDH_hrcv1.1<-mvalues_PCDH_hrcv1.1[,rownames(mvalues_PCDH_hrcv1.1_col)]
+save(mvalues_PCDH_hrcv1.1,file = "Output_02_mvalues_PCDH_hrcv1.1.RData")
+```
+
+
+```{r}
+## 2. Extract dosages from VCF-files using VCFtools 		
+##    Filter on HWE P-value < 0.0001 and extract SNPs 
+##    selected in step 1.
+path_geno<-"/exports/molepi/RSC_BIOS/Users/yliu/Protocadherins_gene_cluster/BIOS_genotype/"
+# CODAM
+biobanks<-"CODAM"
+for(chr in chrs) { 
+null <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_CODAM.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+} 
+
+biobanks<-"LL"
+for(chr in chrs) { 
+null <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_LL.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+} 
+
+biobanks<-c("LLS_660Q","LLS_OmniExpr")
+for(chr in chrs) { 
+null <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_LLS.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+} 
+
+biobanks<-c("NTR_Affy6","NTR_GoNL")
+for(chr in chrs) { 
+null <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_NTR.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+} 
+
+biobanks<-"PAN"
+for(chr in chrs) { 
+null <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_PAN.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+} 
+
+biobanks<-"RS"
+for(chr in chrs) { 
+null <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_RS.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+} 
+```
+
+
+```{r}
+# Merge all datasets together
+# chr1
+# CODAM
+dat_chr1_CODAM <- read_tsv(file = "chr1.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr1_CODAM <- paste(dat_chr1_CODAM$CHROM,dat_chr1_CODAM$POS, sep = ":")
+dat_chr1_CODAM$CHROM <- dat_chr1_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr1_CODAM),]
+colnames(dat_chr1_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr1_CODAM <- as.matrix(dat_chr1_CODAM)
+rownames(dat_chr1_CODAM) <- rowns_chr1_CODAM
+
+# LL
+dat_chr1_LL <- read_tsv(file = "chr1.LL.DS.FORMAT", progress = FALSE)
+rowns_chr1_LL <- paste(dat_chr1_LL$CHROM,dat_chr1_LL$POS, sep = ":")
+dat_chr1_LL$CHROM <- dat_chr1_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr1_LL),]
+colnames(dat_chr1_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr1_LL <- as.matrix(dat_chr1_LL)
+rownames(dat_chr1_LL) <- rowns_chr1_LL
+
+# PAN
+dat_chr1_PAN <- read_tsv(file = "chr1.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr1_PAN <- paste(dat_chr1_PAN$CHROM, dat_chr1_PAN$POS, sep = ":")
+dat_chr1_PAN$CHROM <- dat_chr1_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr1_PAN),]
+colnames(dat_chr1_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr1_PAN <- as.matrix(dat_chr1_PAN)
+rownames(dat_chr1_PAN) <- rowns_chr1_PAN
+
+# LLS
+# 660Q array
+dat_chr1_LLS_660Q <- read_tsv(file = "chr1.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr1_LLS_660Q <- paste(dat_chr1_LLS_660Q$CHROM, dat_chr1_LLS_660Q$POS, sep = ":")
+dat_chr1_LLS_660Q$CHROM <- dat_chr1_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr1_LLS_660Q),]
+colnames(dat_chr1_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr1_LLS_660Q <- as.matrix(dat_chr1_LLS_660Q)
+rownames(dat_chr1_LLS_660Q) <- rowns_chr1_LLS_660Q
+
+# OmniExpr array
+dat_chr1_LLS_OmniExpr <- read_tsv(file = "chr1.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr1_LLS_OmniExpr <- paste(dat_chr1_LLS_OmniExpr$CHROM, dat_chr1_LLS_OmniExpr$POS, sep = ":")
+dat_chr1_LLS_OmniExpr$CHROM <- dat_chr1_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr1_LLS_OmniExpr),]
+colnames(dat_chr1_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr1_LLS_OmniExpr <- as.matrix(dat_chr1_LLS_OmniExpr)
+rownames(dat_chr1_LLS_OmniExpr) <- rowns_chr1_LLS_OmniExpr
+
+# RS
+dat_chr1_RS <- read_tsv(file = "chr1.RS.DS.FORMAT", progress = FALSE)
+rowns_chr1_RS <- paste(dat_chr1_RS$CHROM, dat_chr1_RS$POS, sep = ":")
+dat_chr1_RS$CHROM <- dat_chr1_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr1_RS),]
+colnames(dat_chr1_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr1_RS <- as.matrix(dat_chr1_RS)
+rownames(dat_chr1_RS) <- rowns_chr1_RS
+
+# NTR
+# Affy6 array
+dat_chr1_NTR_Affy6 <- read_tsv(file = "chr1.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr1_NTR_Affy6 <- paste(dat_chr1_NTR_Affy6$CHROM,dat_chr1_NTR_Affy6$POS, sep = ":")
+dat_chr1_NTR_Affy6$CHROM <- dat_chr1_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr1_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr1_NTR_Affy6),]
+colnames(dat_chr1_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr1_NTR_Affy6 <- as.matrix(dat_chr1_NTR_Affy6)
+rownames(dat_chr1_NTR_Affy6) <- rowns_chr1_NTR_Affy6
+
+# GoNL array
+dat_chr1_NTR_GoNL <- read_tsv(file = "chr1.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr1_NTR_GoNL <- paste(dat_chr1_NTR_GoNL$CHROM, dat_chr1_NTR_GoNL$POS, sep = ":")
+dat_chr1_NTR_GoNL$CHROM <- dat_chr1_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr1_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr1_NTR_GoNL),]
+colnames(dat_chr1_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr1_NTR_GoNL <- as.matrix(dat_chr1_NTR_GoNL)
+rownames(dat_chr1_NTR_GoNL) <- rowns_chr1_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr1_BIOS_dosages<-list(dat_chr1_CODAM,dat_chr1_LL,dat_chr1_LLS_660Q,dat_chr1_LLS_OmniExpr,dat_chr1_NTR_Affy6,dat_chr1_NTR_GoNL,dat_chr1_PAN,dat_chr1_RS)
+rowns <- Reduce(intersect,lapply(chr1_BIOS_dosages, FUN = rownames))
+chr1_BIOS_dosages <- lapply(chr1_BIOS_dosages, function(x) x[rowns,])
+chr1_BIOS_dosages<-do.call(cbind,chr1_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr1_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr1_BIOS_dosages<-chr1_BIOS_dosages[rownames(MAFs),]
+chr1_BIOS_dosages<-chr1_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr1_BIOS_dosages,file = "chr1_BIOS_dosages.RData")
+```
+
+```{r}
+# chr2
+# CODAM
+dat_chr2_CODAM <- read_tsv(file = "chr2.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr2_CODAM <- paste(dat_chr2_CODAM$CHROM,dat_chr2_CODAM$POS, sep = ":")
+dat_chr2_CODAM$CHROM <- dat_chr2_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr2_CODAM),]
+colnames(dat_chr2_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr2_CODAM <- as.matrix(dat_chr2_CODAM)
+rownames(dat_chr2_CODAM) <- rowns_chr2_CODAM
+
+# LL
+dat_chr2_LL <- read_tsv(file = "chr2.LL.DS.FORMAT", progress = FALSE)
+rowns_chr2_LL <- paste(dat_chr2_LL$CHROM,dat_chr2_LL$POS, sep = ":")
+dat_chr2_LL$CHROM <- dat_chr2_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr2_LL),]
+colnames(dat_chr2_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr2_LL <- as.matrix(dat_chr2_LL)
+rownames(dat_chr2_LL) <- rowns_chr2_LL
+
+# PAN
+dat_chr2_PAN <- read_tsv(file = "chr2.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr2_PAN <- paste(dat_chr2_PAN$CHROM, dat_chr2_PAN$POS, sep = ":")
+dat_chr2_PAN$CHROM <- dat_chr2_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr2_PAN),]
+colnames(dat_chr2_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr2_PAN <- as.matrix(dat_chr2_PAN)
+rownames(dat_chr2_PAN) <- rowns_chr2_PAN
+
+# LLS
+# 660Q array
+dat_chr2_LLS_660Q <- read_tsv(file = "chr2.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr2_LLS_660Q <- paste(dat_chr2_LLS_660Q$CHROM, dat_chr2_LLS_660Q$POS, sep = ":")
+dat_chr2_LLS_660Q$CHROM <- dat_chr2_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr2_LLS_660Q),]
+colnames(dat_chr2_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr2_LLS_660Q <- as.matrix(dat_chr2_LLS_660Q)
+rownames(dat_chr2_LLS_660Q) <- rowns_chr2_LLS_660Q
+
+# OmniExpr array
+dat_chr2_LLS_OmniExpr <- read_tsv(file = "chr2.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr2_LLS_OmniExpr <- paste(dat_chr2_LLS_OmniExpr$CHROM, dat_chr2_LLS_OmniExpr$POS, sep = ":")
+dat_chr2_LLS_OmniExpr$CHROM <- dat_chr2_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr2_LLS_OmniExpr),]
+colnames(dat_chr2_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr2_LLS_OmniExpr <- as.matrix(dat_chr2_LLS_OmniExpr)
+rownames(dat_chr2_LLS_OmniExpr) <- rowns_chr2_LLS_OmniExpr
+
+# RS
+dat_chr2_RS <- read_tsv(file = "chr2.RS.DS.FORMAT", progress = FALSE)
+rowns_chr2_RS <- paste(dat_chr2_RS$CHROM, dat_chr2_RS$POS, sep = ":")
+dat_chr2_RS$CHROM <- dat_chr2_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr2_RS),]
+colnames(dat_chr2_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr2_RS <- as.matrix(dat_chr2_RS)
+rownames(dat_chr2_RS) <- rowns_chr2_RS
+
+# NTR
+# Affy6 array
+dat_chr2_NTR_Affy6 <- read_tsv(file = "chr2.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr2_NTR_Affy6 <- paste(dat_chr2_NTR_Affy6$CHROM,dat_chr2_NTR_Affy6$POS, sep = ":")
+dat_chr2_NTR_Affy6$CHROM <- dat_chr2_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr2_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr2_NTR_Affy6),]
+colnames(dat_chr2_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr2_NTR_Affy6 <- as.matrix(dat_chr2_NTR_Affy6)
+rownames(dat_chr2_NTR_Affy6) <- rowns_chr2_NTR_Affy6
+
+# GoNL array
+dat_chr2_NTR_GoNL <- read_tsv(file = "chr2.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr2_NTR_GoNL <- paste(dat_chr2_NTR_GoNL$CHROM, dat_chr2_NTR_GoNL$POS, sep = ":")
+dat_chr2_NTR_GoNL$CHROM <- dat_chr2_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr2_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr2_NTR_GoNL),]
+colnames(dat_chr2_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr2_NTR_GoNL <- as.matrix(dat_chr2_NTR_GoNL)
+rownames(dat_chr2_NTR_GoNL) <- rowns_chr2_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr2_BIOS_dosages<-list(dat_chr2_CODAM,dat_chr2_LL,dat_chr2_LLS_660Q,dat_chr2_LLS_OmniExpr,dat_chr2_NTR_Affy6,dat_chr2_NTR_GoNL,dat_chr2_PAN,dat_chr2_RS)
+rowns <- Reduce(intersect,lapply(chr2_BIOS_dosages, FUN = rownames))
+chr2_BIOS_dosages <- lapply(chr2_BIOS_dosages, function(x) x[rowns,])
+chr2_BIOS_dosages<-do.call(cbind,chr2_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr2_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr2_BIOS_dosages<-chr2_BIOS_dosages[rownames(MAFs),]
+chr2_BIOS_dosages<-chr2_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr2_BIOS_dosages,file = "chr2_BIOS_dosages.RData")
+```
+
+```{r}
+# chr3
+# CODAM
+dat_chr3_CODAM <- read_tsv(file = "chr3.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr3_CODAM <- paste(dat_chr3_CODAM$CHROM,dat_chr3_CODAM$POS, sep = ":")
+dat_chr3_CODAM$CHROM <- dat_chr3_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr3_CODAM),]
+colnames(dat_chr3_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr3_CODAM <- as.matrix(dat_chr3_CODAM)
+rownames(dat_chr3_CODAM) <- rowns_chr3_CODAM
+
+# LL
+dat_chr3_LL <- read_tsv(file = "chr3.LL.DS.FORMAT", progress = FALSE)
+rowns_chr3_LL <- paste(dat_chr3_LL$CHROM,dat_chr3_LL$POS, sep = ":")
+dat_chr3_LL$CHROM <- dat_chr3_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr3_LL),]
+colnames(dat_chr3_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr3_LL <- as.matrix(dat_chr3_LL)
+rownames(dat_chr3_LL) <- rowns_chr3_LL
+
+# PAN
+dat_chr3_PAN <- read_tsv(file = "chr3.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr3_PAN <- paste(dat_chr3_PAN$CHROM, dat_chr3_PAN$POS, sep = ":")
+dat_chr3_PAN$CHROM <- dat_chr3_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr3_PAN),]
+colnames(dat_chr3_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr3_PAN <- as.matrix(dat_chr3_PAN)
+rownames(dat_chr3_PAN) <- rowns_chr3_PAN
+
+# LLS
+# 660Q array
+dat_chr3_LLS_660Q <- read_tsv(file = "chr3.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr3_LLS_660Q <- paste(dat_chr3_LLS_660Q$CHROM, dat_chr3_LLS_660Q$POS, sep = ":")
+dat_chr3_LLS_660Q$CHROM <- dat_chr3_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr3_LLS_660Q),]
+colnames(dat_chr3_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr3_LLS_660Q <- as.matrix(dat_chr3_LLS_660Q)
+rownames(dat_chr3_LLS_660Q) <- rowns_chr3_LLS_660Q
+
+# OmniExpr array
+dat_chr3_LLS_OmniExpr <- read_tsv(file = "chr3.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr3_LLS_OmniExpr <- paste(dat_chr3_LLS_OmniExpr$CHROM, dat_chr3_LLS_OmniExpr$POS, sep = ":")
+dat_chr3_LLS_OmniExpr$CHROM <- dat_chr3_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr3_LLS_OmniExpr),]
+colnames(dat_chr3_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr3_LLS_OmniExpr <- as.matrix(dat_chr3_LLS_OmniExpr)
+rownames(dat_chr3_LLS_OmniExpr) <- rowns_chr3_LLS_OmniExpr
+
+# RS
+dat_chr3_RS <- read_tsv(file = "chr3.RS.DS.FORMAT", progress = FALSE)
+rowns_chr3_RS <- paste(dat_chr3_RS$CHROM, dat_chr3_RS$POS, sep = ":")
+dat_chr3_RS$CHROM <- dat_chr3_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr3_RS),]
+colnames(dat_chr3_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr3_RS <- as.matrix(dat_chr3_RS)
+rownames(dat_chr3_RS) <- rowns_chr3_RS
+
+# NTR
+# Affy6 array
+dat_chr3_NTR_Affy6 <- read_tsv(file = "chr3.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr3_NTR_Affy6 <- paste(dat_chr3_NTR_Affy6$CHROM,dat_chr3_NTR_Affy6$POS, sep = ":")
+dat_chr3_NTR_Affy6$CHROM <- dat_chr3_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr3_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr3_NTR_Affy6),]
+colnames(dat_chr3_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr3_NTR_Affy6 <- as.matrix(dat_chr3_NTR_Affy6)
+rownames(dat_chr3_NTR_Affy6) <- rowns_chr3_NTR_Affy6
+
+# GoNL array
+dat_chr3_NTR_GoNL <- read_tsv(file = "chr3.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr3_NTR_GoNL <- paste(dat_chr3_NTR_GoNL$CHROM, dat_chr3_NTR_GoNL$POS, sep = ":")
+dat_chr3_NTR_GoNL$CHROM <- dat_chr3_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr3_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr3_NTR_GoNL),]
+colnames(dat_chr3_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr3_NTR_GoNL <- as.matrix(dat_chr3_NTR_GoNL)
+rownames(dat_chr3_NTR_GoNL) <- rowns_chr3_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr3_BIOS_dosages<-list(dat_chr3_CODAM,dat_chr3_LL,dat_chr3_LLS_660Q,dat_chr3_LLS_OmniExpr,dat_chr3_NTR_Affy6,dat_chr3_NTR_GoNL,dat_chr3_PAN,dat_chr3_RS)
+rowns <- Reduce(intersect,lapply(chr3_BIOS_dosages, FUN = rownames))
+chr3_BIOS_dosages <- lapply(chr3_BIOS_dosages, function(x) x[rowns,])
+chr3_BIOS_dosages<-do.call(cbind,chr3_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr3_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr3_BIOS_dosages<-chr3_BIOS_dosages[rownames(MAFs),]
+chr3_BIOS_dosages<-chr3_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr3_BIOS_dosages,file = "chr3_BIOS_dosages.RData")
+```
+
+```{r}
+# chr4
+# CODAM
+dat_chr4_CODAM <- read_tsv(file = "chr4.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr4_CODAM <- paste(dat_chr4_CODAM$CHROM,dat_chr4_CODAM$POS, sep = ":")
+dat_chr4_CODAM$CHROM <- dat_chr4_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr4_CODAM),]
+colnames(dat_chr4_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr4_CODAM <- as.matrix(dat_chr4_CODAM)
+rownames(dat_chr4_CODAM) <- rowns_chr4_CODAM
+
+# LL
+dat_chr4_LL <- read_tsv(file = "chr4.LL.DS.FORMAT", progress = FALSE)
+rowns_chr4_LL <- paste(dat_chr4_LL$CHROM,dat_chr4_LL$POS, sep = ":")
+dat_chr4_LL$CHROM <- dat_chr4_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr4_LL),]
+colnames(dat_chr4_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr4_LL <- as.matrix(dat_chr4_LL)
+rownames(dat_chr4_LL) <- rowns_chr4_LL
+
+# PAN
+dat_chr4_PAN <- read_tsv(file = "chr4.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr4_PAN <- paste(dat_chr4_PAN$CHROM, dat_chr4_PAN$POS, sep = ":")
+dat_chr4_PAN$CHROM <- dat_chr4_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr4_PAN),]
+colnames(dat_chr4_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr4_PAN <- as.matrix(dat_chr4_PAN)
+rownames(dat_chr4_PAN) <- rowns_chr4_PAN
+
+# LLS
+# 660Q array
+dat_chr4_LLS_660Q <- read_tsv(file = "chr4.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr4_LLS_660Q <- paste(dat_chr4_LLS_660Q$CHROM, dat_chr4_LLS_660Q$POS, sep = ":")
+dat_chr4_LLS_660Q$CHROM <- dat_chr4_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr4_LLS_660Q),]
+colnames(dat_chr4_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr4_LLS_660Q <- as.matrix(dat_chr4_LLS_660Q)
+rownames(dat_chr4_LLS_660Q) <- rowns_chr4_LLS_660Q
+
+# OmniExpr array
+dat_chr4_LLS_OmniExpr <- read_tsv(file = "chr4.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr4_LLS_OmniExpr <- paste(dat_chr4_LLS_OmniExpr$CHROM, dat_chr4_LLS_OmniExpr$POS, sep = ":")
+dat_chr4_LLS_OmniExpr$CHROM <- dat_chr4_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr4_LLS_OmniExpr),]
+colnames(dat_chr4_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr4_LLS_OmniExpr <- as.matrix(dat_chr4_LLS_OmniExpr)
+rownames(dat_chr4_LLS_OmniExpr) <- rowns_chr4_LLS_OmniExpr
+
+# RS
+dat_chr4_RS <- read_tsv(file = "chr4.RS.DS.FORMAT", progress = FALSE)
+rowns_chr4_RS <- paste(dat_chr4_RS$CHROM, dat_chr4_RS$POS, sep = ":")
+dat_chr4_RS$CHROM <- dat_chr4_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr4_RS),]
+colnames(dat_chr4_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr4_RS <- as.matrix(dat_chr4_RS)
+rownames(dat_chr4_RS) <- rowns_chr4_RS
+
+# NTR
+# Affy6 array
+dat_chr4_NTR_Affy6 <- read_tsv(file = "chr4.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr4_NTR_Affy6 <- paste(dat_chr4_NTR_Affy6$CHROM,dat_chr4_NTR_Affy6$POS, sep = ":")
+dat_chr4_NTR_Affy6$CHROM <- dat_chr4_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr4_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr4_NTR_Affy6),]
+colnames(dat_chr4_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr4_NTR_Affy6 <- as.matrix(dat_chr4_NTR_Affy6)
+rownames(dat_chr4_NTR_Affy6) <- rowns_chr4_NTR_Affy6
+
+# GoNL array
+dat_chr4_NTR_GoNL <- read_tsv(file = "chr4.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr4_NTR_GoNL <- paste(dat_chr4_NTR_GoNL$CHROM, dat_chr4_NTR_GoNL$POS, sep = ":")
+dat_chr4_NTR_GoNL$CHROM <- dat_chr4_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr4_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr4_NTR_GoNL),]
+colnames(dat_chr4_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr4_NTR_GoNL <- as.matrix(dat_chr4_NTR_GoNL)
+rownames(dat_chr4_NTR_GoNL) <- rowns_chr4_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr4_BIOS_dosages<-list(dat_chr4_CODAM,dat_chr4_LL,dat_chr4_LLS_660Q,dat_chr4_LLS_OmniExpr,dat_chr4_NTR_Affy6,dat_chr4_NTR_GoNL,dat_chr4_PAN,dat_chr4_RS)
+rowns <- Reduce(intersect,lapply(chr4_BIOS_dosages, FUN = rownames))
+chr4_BIOS_dosages <- lapply(chr4_BIOS_dosages, function(x) x[rowns,])
+chr4_BIOS_dosages<-do.call(cbind,chr4_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr4_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr4_BIOS_dosages<-chr4_BIOS_dosages[rownames(MAFs),]
+chr4_BIOS_dosages<-chr4_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr4_BIOS_dosages,file = "chr4_BIOS_dosages.RData")
+```
+
+```{r}
+# chr5
+# CODAM
+dat_chr5_CODAM <- read_tsv(file = "chr5.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr5_CODAM <- paste(dat_chr5_CODAM$CHROM,dat_chr5_CODAM$POS, sep = ":")
+dat_chr5_CODAM$CHROM <- dat_chr5_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr5_CODAM),]
+colnames(dat_chr5_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr5_CODAM <- as.matrix(dat_chr5_CODAM)
+rownames(dat_chr5_CODAM) <- rowns_chr5_CODAM
+
+# LL
+dat_chr5_LL <- read_tsv(file = "chr5.LL.DS.FORMAT", progress = FALSE)
+rowns_chr5_LL <- paste(dat_chr5_LL$CHROM,dat_chr5_LL$POS, sep = ":")
+dat_chr5_LL$CHROM <- dat_chr5_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr5_LL),]
+colnames(dat_chr5_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr5_LL <- as.matrix(dat_chr5_LL)
+rownames(dat_chr5_LL) <- rowns_chr5_LL
+
+# PAN
+dat_chr5_PAN <- read_tsv(file = "chr5.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr5_PAN <- paste(dat_chr5_PAN$CHROM, dat_chr5_PAN$POS, sep = ":")
+dat_chr5_PAN$CHROM <- dat_chr5_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr5_PAN),]
+colnames(dat_chr5_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr5_PAN <- as.matrix(dat_chr5_PAN)
+rownames(dat_chr5_PAN) <- rowns_chr5_PAN
+
+# LLS
+# 660Q array
+dat_chr5_LLS_660Q <- read_tsv(file = "chr5.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr5_LLS_660Q <- paste(dat_chr5_LLS_660Q$CHROM, dat_chr5_LLS_660Q$POS, sep = ":")
+dat_chr5_LLS_660Q$CHROM <- dat_chr5_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr5_LLS_660Q),]
+colnames(dat_chr5_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr5_LLS_660Q <- as.matrix(dat_chr5_LLS_660Q)
+rownames(dat_chr5_LLS_660Q) <- rowns_chr5_LLS_660Q
+
+# OmniExpr array
+dat_chr5_LLS_OmniExpr <- read_tsv(file = "chr5.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr5_LLS_OmniExpr <- paste(dat_chr5_LLS_OmniExpr$CHROM, dat_chr5_LLS_OmniExpr$POS, sep = ":")
+dat_chr5_LLS_OmniExpr$CHROM <- dat_chr5_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr5_LLS_OmniExpr),]
+colnames(dat_chr5_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr5_LLS_OmniExpr <- as.matrix(dat_chr5_LLS_OmniExpr)
+rownames(dat_chr5_LLS_OmniExpr) <- rowns_chr5_LLS_OmniExpr
+
+# RS
+dat_chr5_RS <- read_tsv(file = "chr5.RS.DS.FORMAT", progress = FALSE)
+rowns_chr5_RS <- paste(dat_chr5_RS$CHROM, dat_chr5_RS$POS, sep = ":")
+dat_chr5_RS$CHROM <- dat_chr5_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr5_RS),]
+colnames(dat_chr5_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr5_RS <- as.matrix(dat_chr5_RS)
+rownames(dat_chr5_RS) <- rowns_chr5_RS
+
+# NTR
+# Affy6 array
+dat_chr5_NTR_Affy6 <- read_tsv(file = "chr5.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr5_NTR_Affy6 <- paste(dat_chr5_NTR_Affy6$CHROM,dat_chr5_NTR_Affy6$POS, sep = ":")
+dat_chr5_NTR_Affy6$CHROM <- dat_chr5_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr5_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr5_NTR_Affy6),]
+colnames(dat_chr5_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr5_NTR_Affy6 <- as.matrix(dat_chr5_NTR_Affy6)
+rownames(dat_chr5_NTR_Affy6) <- rowns_chr5_NTR_Affy6
+
+# GoNL array
+dat_chr5_NTR_GoNL <- read_tsv(file = "chr5.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr5_NTR_GoNL <- paste(dat_chr5_NTR_GoNL$CHROM, dat_chr5_NTR_GoNL$POS, sep = ":")
+dat_chr5_NTR_GoNL$CHROM <- dat_chr5_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr5_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr5_NTR_GoNL),]
+colnames(dat_chr5_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr5_NTR_GoNL <- as.matrix(dat_chr5_NTR_GoNL)
+rownames(dat_chr5_NTR_GoNL) <- rowns_chr5_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr5_BIOS_dosages<-list(dat_chr5_CODAM,dat_chr5_LL,dat_chr5_LLS_660Q,dat_chr5_LLS_OmniExpr,dat_chr5_NTR_Affy6,dat_chr5_NTR_GoNL,dat_chr5_PAN,dat_chr5_RS)
+rowns <- Reduce(intersect,lapply(chr5_BIOS_dosages, FUN = rownames))
+chr5_BIOS_dosages <- lapply(chr5_BIOS_dosages, function(x) x[rowns,])
+chr5_BIOS_dosages<-do.call(cbind,chr5_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr5_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr5_BIOS_dosages<-chr5_BIOS_dosages[rownames(MAFs),]
+chr5_BIOS_dosages<-chr5_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr5_BIOS_dosages,file = "chr5_BIOS_dosages.RData")
+```
+
+
+```{r}
+# chr6
+# CODAM
+dat_chr6_CODAM <- read_tsv(file = "chr6.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr6_CODAM <- paste(dat_chr6_CODAM$CHROM,dat_chr6_CODAM$POS, sep = ":")
+dat_chr6_CODAM$CHROM <- dat_chr6_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr6_CODAM),]
+colnames(dat_chr6_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr6_CODAM <- as.matrix(dat_chr6_CODAM)
+rownames(dat_chr6_CODAM) <- rowns_chr6_CODAM
+
+# LL
+dat_chr6_LL <- read_tsv(file = "chr6.LL.DS.FORMAT", progress = FALSE)
+rowns_chr6_LL <- paste(dat_chr6_LL$CHROM,dat_chr6_LL$POS, sep = ":")
+dat_chr6_LL$CHROM <- dat_chr6_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr6_LL),]
+colnames(dat_chr6_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr6_LL <- as.matrix(dat_chr6_LL)
+rownames(dat_chr6_LL) <- rowns_chr6_LL
+
+# PAN
+dat_chr6_PAN <- read_tsv(file = "chr6.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr6_PAN <- paste(dat_chr6_PAN$CHROM, dat_chr6_PAN$POS, sep = ":")
+dat_chr6_PAN$CHROM <- dat_chr6_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr6_PAN),]
+colnames(dat_chr6_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr6_PAN <- as.matrix(dat_chr6_PAN)
+rownames(dat_chr6_PAN) <- rowns_chr6_PAN
+
+# LLS
+# 660Q array
+dat_chr6_LLS_660Q <- read_tsv(file = "chr6.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr6_LLS_660Q <- paste(dat_chr6_LLS_660Q$CHROM, dat_chr6_LLS_660Q$POS, sep = ":")
+dat_chr6_LLS_660Q$CHROM <- dat_chr6_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr6_LLS_660Q),]
+colnames(dat_chr6_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr6_LLS_660Q <- as.matrix(dat_chr6_LLS_660Q)
+rownames(dat_chr6_LLS_660Q) <- rowns_chr6_LLS_660Q
+
+# OmniExpr array
+dat_chr6_LLS_OmniExpr <- read_tsv(file = "chr6.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr6_LLS_OmniExpr <- paste(dat_chr6_LLS_OmniExpr$CHROM, dat_chr6_LLS_OmniExpr$POS, sep = ":")
+dat_chr6_LLS_OmniExpr$CHROM <- dat_chr6_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr6_LLS_OmniExpr),]
+colnames(dat_chr6_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr6_LLS_OmniExpr <- as.matrix(dat_chr6_LLS_OmniExpr)
+rownames(dat_chr6_LLS_OmniExpr) <- rowns_chr6_LLS_OmniExpr
+
+# RS
+dat_chr6_RS <- read_tsv(file = "chr6.RS.DS.FORMAT", progress = FALSE)
+rowns_chr6_RS <- paste(dat_chr6_RS$CHROM, dat_chr6_RS$POS, sep = ":")
+dat_chr6_RS$CHROM <- dat_chr6_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr6_RS),]
+colnames(dat_chr6_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr6_RS <- as.matrix(dat_chr6_RS)
+rownames(dat_chr6_RS) <- rowns_chr6_RS
+
+# NTR
+# Affy6 array
+dat_chr6_NTR_Affy6 <- read_tsv(file = "chr6.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr6_NTR_Affy6 <- paste(dat_chr6_NTR_Affy6$CHROM,dat_chr6_NTR_Affy6$POS, sep = ":")
+dat_chr6_NTR_Affy6$CHROM <- dat_chr6_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr6_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr6_NTR_Affy6),]
+colnames(dat_chr6_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr6_NTR_Affy6 <- as.matrix(dat_chr6_NTR_Affy6)
+rownames(dat_chr6_NTR_Affy6) <- rowns_chr6_NTR_Affy6
+
+# GoNL array
+dat_chr6_NTR_GoNL <- read_tsv(file = "chr6.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr6_NTR_GoNL <- paste(dat_chr6_NTR_GoNL$CHROM, dat_chr6_NTR_GoNL$POS, sep = ":")
+dat_chr6_NTR_GoNL$CHROM <- dat_chr6_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr6_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr6_NTR_GoNL),]
+colnames(dat_chr6_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr6_NTR_GoNL <- as.matrix(dat_chr6_NTR_GoNL)
+rownames(dat_chr6_NTR_GoNL) <- rowns_chr6_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr6_BIOS_dosages<-list(dat_chr6_CODAM,dat_chr6_LL,dat_chr6_LLS_660Q,dat_chr6_LLS_OmniExpr,dat_chr6_NTR_Affy6,dat_chr6_NTR_GoNL,dat_chr6_PAN,dat_chr6_RS)
+rowns <- Reduce(intersect,lapply(chr6_BIOS_dosages, FUN = rownames))
+chr6_BIOS_dosages <- lapply(chr6_BIOS_dosages, function(x) x[rowns,])
+chr6_BIOS_dosages<-do.call(cbind,chr6_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr6_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr6_BIOS_dosages<-chr6_BIOS_dosages[rownames(MAFs),]
+chr6_BIOS_dosages<-chr6_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr6_BIOS_dosages,file = "chr6_BIOS_dosages.RData")
+```
+
+```{r}
+# chr7
+# CODAM
+dat_chr7_CODAM <- read_tsv(file = "chr7.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr7_CODAM <- paste(dat_chr7_CODAM$CHROM,dat_chr7_CODAM$POS, sep = ":")
+dat_chr7_CODAM$CHROM <- dat_chr7_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr7_CODAM),]
+colnames(dat_chr7_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr7_CODAM <- as.matrix(dat_chr7_CODAM)
+rownames(dat_chr7_CODAM) <- rowns_chr7_CODAM
+
+# LL
+dat_chr7_LL<-read_tsv(file = "chr7.LL.DS.FORMAT", progress = FALSE)
+rowns_chr7_LL <- paste(dat_chr7_LL$CHROM,dat_chr7_LL$POS, sep = ":")
+dat_chr7_LL$CHROM <- dat_chr7_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr7_LL),]
+colnames(dat_chr7_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr7_LL <- as.matrix(dat_chr7_LL)
+rownames(dat_chr7_LL) <- rowns_chr7_LL
+
+# PAN
+dat_chr7_PAN <- read_tsv(file = "chr7.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr7_PAN <- paste(dat_chr7_PAN$CHROM, dat_chr7_PAN$POS, sep = ":")
+dat_chr7_PAN$CHROM <- dat_chr7_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr7_PAN),]
+colnames(dat_chr7_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr7_PAN <- as.matrix(dat_chr7_PAN)
+rownames(dat_chr7_PAN) <- rowns_chr7_PAN
+
+# LLS
+# 660Q array
+dat_chr7_LLS_660Q <- read_tsv(file = "chr7.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr7_LLS_660Q <- paste(dat_chr7_LLS_660Q$CHROM, dat_chr7_LLS_660Q$POS, sep = ":")
+dat_chr7_LLS_660Q$CHROM <- dat_chr7_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr7_LLS_660Q),]
+colnames(dat_chr7_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr7_LLS_660Q <- as.matrix(dat_chr7_LLS_660Q)
+rownames(dat_chr7_LLS_660Q) <- rowns_chr7_LLS_660Q
+
+# OmniExpr array
+dat_chr7_LLS_OmniExpr <- read_tsv(file = "chr7.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr7_LLS_OmniExpr <- paste(dat_chr7_LLS_OmniExpr$CHROM, dat_chr7_LLS_OmniExpr$POS, sep = ":")
+dat_chr7_LLS_OmniExpr$CHROM <- dat_chr7_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr7_LLS_OmniExpr),]
+colnames(dat_chr7_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr7_LLS_OmniExpr <- as.matrix(dat_chr7_LLS_OmniExpr)
+rownames(dat_chr7_LLS_OmniExpr) <- rowns_chr7_LLS_OmniExpr
+
+# RS
+dat_chr7_RS <- read_tsv(file = "chr7.RS.DS.FORMAT", progress = FALSE)
+rowns_chr7_RS <- paste(dat_chr7_RS$CHROM, dat_chr7_RS$POS, sep = ":")
+dat_chr7_RS$CHROM <- dat_chr7_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr7_RS),]
+colnames(dat_chr7_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr7_RS <- as.matrix(dat_chr7_RS)
+rownames(dat_chr7_RS) <- rowns_chr7_RS
+
+# NTR
+# Affy6 array
+dat_chr7_NTR_Affy6 <- read_tsv(file = "chr7.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr7_NTR_Affy6 <- paste(dat_chr7_NTR_Affy6$CHROM,dat_chr7_NTR_Affy6$POS, sep = ":")
+dat_chr7_NTR_Affy6$CHROM <- dat_chr7_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr7_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr7_NTR_Affy6),]
+colnames(dat_chr7_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr7_NTR_Affy6 <- as.matrix(dat_chr7_NTR_Affy6)
+rownames(dat_chr7_NTR_Affy6) <- rowns_chr7_NTR_Affy6
+
+# GoNL array
+dat_chr7_NTR_GoNL <- read_tsv(file = "chr7.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr7_NTR_GoNL <- paste(dat_chr7_NTR_GoNL$CHROM, dat_chr7_NTR_GoNL$POS, sep = ":")
+dat_chr7_NTR_GoNL$CHROM <- dat_chr7_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr7_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr7_NTR_GoNL),]
+colnames(dat_chr7_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr7_NTR_GoNL <- as.matrix(dat_chr7_NTR_GoNL)
+rownames(dat_chr7_NTR_GoNL) <- rowns_chr7_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr7_BIOS_dosages<-list(dat_chr7_CODAM,dat_chr7_LL,dat_chr7_LLS_660Q,dat_chr7_LLS_OmniExpr,dat_chr7_NTR_Affy6,dat_chr7_NTR_GoNL,dat_chr7_PAN,dat_chr7_RS)
+rowns <- Reduce(intersect,lapply(chr7_BIOS_dosages, FUN = rownames))
+chr7_BIOS_dosages <- lapply(chr7_BIOS_dosages, function(x) x[rowns,])
+chr7_BIOS_dosages<-do.call(cbind,chr7_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr7_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr7_BIOS_dosages<-chr7_BIOS_dosages[rownames(MAFs),]
+chr7_BIOS_dosages<-chr7_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr7_BIOS_dosages,file = "chr7_BIOS_dosages.RData")
+```
+
+```{r}
+# chr8
+# CODAM
+dat_chr8_CODAM <- read_tsv(file = "chr8.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr8_CODAM <- paste(dat_chr8_CODAM$CHROM,dat_chr8_CODAM$POS, sep = ":")
+dat_chr8_CODAM$CHROM <- dat_chr8_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr8_CODAM),]
+colnames(dat_chr8_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr8_CODAM <- as.matrix(dat_chr8_CODAM)
+rownames(dat_chr8_CODAM) <- rowns_chr8_CODAM
+
+# LL
+dat_chr8_LL <- read_tsv(file = "chr8.LL.DS.FORMAT", progress = FALSE)
+rowns_chr8_LL <- paste(dat_chr8_LL$CHROM,dat_chr8_LL$POS, sep = ":")
+dat_chr8_LL$CHROM <- dat_chr8_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr8_LL),]
+colnames(dat_chr8_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr8_LL <- as.matrix(dat_chr8_LL)
+rownames(dat_chr8_LL) <- rowns_chr8_LL
+
+# PAN
+dat_chr8_PAN <- read_tsv(file = "chr8.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr8_PAN <- paste(dat_chr8_PAN$CHROM, dat_chr8_PAN$POS, sep = ":")
+dat_chr8_PAN$CHROM <- dat_chr8_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr8_PAN),]
+colnames(dat_chr8_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr8_PAN <- as.matrix(dat_chr8_PAN)
+rownames(dat_chr8_PAN) <- rowns_chr8_PAN
+
+# LLS
+# 660Q array
+dat_chr8_LLS_660Q <- read_tsv(file = "chr8.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr8_LLS_660Q <- paste(dat_chr8_LLS_660Q$CHROM, dat_chr8_LLS_660Q$POS, sep = ":")
+dat_chr8_LLS_660Q$CHROM <- dat_chr8_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr8_LLS_660Q),]
+colnames(dat_chr8_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr8_LLS_660Q <- as.matrix(dat_chr8_LLS_660Q)
+rownames(dat_chr8_LLS_660Q) <- rowns_chr8_LLS_660Q
+
+# OmniExpr array
+dat_chr8_LLS_OmniExpr <- read_tsv(file = "chr8.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr8_LLS_OmniExpr <- paste(dat_chr8_LLS_OmniExpr$CHROM, dat_chr8_LLS_OmniExpr$POS, sep = ":")
+dat_chr8_LLS_OmniExpr$CHROM <- dat_chr8_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr8_LLS_OmniExpr),]
+colnames(dat_chr8_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr8_LLS_OmniExpr <- as.matrix(dat_chr8_LLS_OmniExpr)
+rownames(dat_chr8_LLS_OmniExpr) <- rowns_chr8_LLS_OmniExpr
+
+# RS
+dat_chr8_RS <- read_tsv(file = "chr8.RS.DS.FORMAT", progress = FALSE)
+rowns_chr8_RS <- paste(dat_chr8_RS$CHROM, dat_chr8_RS$POS, sep = ":")
+dat_chr8_RS$CHROM <- dat_chr8_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr8_RS),]
+colnames(dat_chr8_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr8_RS <- as.matrix(dat_chr8_RS)
+rownames(dat_chr8_RS) <- rowns_chr8_RS
+
+# NTR
+# Affy6 array
+dat_chr8_NTR_Affy6 <- read_tsv(file = "chr8.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr8_NTR_Affy6 <- paste(dat_chr8_NTR_Affy6$CHROM,dat_chr8_NTR_Affy6$POS, sep = ":")
+dat_chr8_NTR_Affy6$CHROM <- dat_chr8_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr8_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr8_NTR_Affy6),]
+colnames(dat_chr8_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr8_NTR_Affy6 <- as.matrix(dat_chr8_NTR_Affy6)
+rownames(dat_chr8_NTR_Affy6) <- rowns_chr8_NTR_Affy6
+
+# GoNL array
+dat_chr8_NTR_GoNL <- read_tsv(file = "chr8.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr8_NTR_GoNL <- paste(dat_chr8_NTR_GoNL$CHROM, dat_chr8_NTR_GoNL$POS, sep = ":")
+dat_chr8_NTR_GoNL$CHROM <- dat_chr8_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr8_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr8_NTR_GoNL),]
+colnames(dat_chr8_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr8_NTR_GoNL <- as.matrix(dat_chr8_NTR_GoNL)
+rownames(dat_chr8_NTR_GoNL) <- rowns_chr8_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr8_BIOS_dosages<-list(dat_chr8_CODAM,dat_chr8_LL,dat_chr8_LLS_660Q,dat_chr8_LLS_OmniExpr,dat_chr8_NTR_Affy6,dat_chr8_NTR_GoNL,dat_chr8_PAN,dat_chr8_RS)
+rowns <- Reduce(intersect,lapply(chr8_BIOS_dosages, FUN = rownames))
+chr8_BIOS_dosages <- lapply(chr8_BIOS_dosages, function(x) x[rowns,])
+chr8_BIOS_dosages<-do.call(cbind,chr8_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr8_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr8_BIOS_dosages<-chr8_BIOS_dosages[rownames(MAFs),]
+chr8_BIOS_dosages<-chr8_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr8_BIOS_dosages,file = "chr8_BIOS_dosages.RData")
+```
+
+```{r}
+# chr9
+# CODAM
+dat_chr9_CODAM <- read_tsv(file = "chr9.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr9_CODAM <- paste(dat_chr9_CODAM$CHROM,dat_chr9_CODAM$POS, sep = ":")
+dat_chr9_CODAM$CHROM <- dat_chr9_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr9_CODAM),]
+colnames(dat_chr9_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr9_CODAM <- as.matrix(dat_chr9_CODAM)
+rownames(dat_chr9_CODAM) <- rowns_chr9_CODAM
+
+# LL
+dat_chr9_LL <- read_tsv(file = "chr9.LL.DS.FORMAT", progress = FALSE)
+rowns_chr9_LL <- paste(dat_chr9_LL$CHROM,dat_chr9_LL$POS, sep = ":")
+dat_chr9_LL$CHROM <- dat_chr9_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr9_LL),]
+colnames(dat_chr9_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr9_LL <- as.matrix(dat_chr9_LL)
+rownames(dat_chr9_LL) <- rowns_chr9_LL
+
+# PAN
+dat_chr9_PAN <- read_tsv(file = "chr9.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr9_PAN <- paste(dat_chr9_PAN$CHROM, dat_chr9_PAN$POS, sep = ":")
+dat_chr9_PAN$CHROM <- dat_chr9_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr9_PAN),]
+colnames(dat_chr9_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr9_PAN <- as.matrix(dat_chr9_PAN)
+rownames(dat_chr9_PAN) <- rowns_chr9_PAN
+
+# LLS
+# 660Q array
+dat_chr9_LLS_660Q <- read_tsv(file = "chr9.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr9_LLS_660Q <- paste(dat_chr9_LLS_660Q$CHROM, dat_chr9_LLS_660Q$POS, sep = ":")
+dat_chr9_LLS_660Q$CHROM <- dat_chr9_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr9_LLS_660Q),]
+colnames(dat_chr9_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr9_LLS_660Q <- as.matrix(dat_chr9_LLS_660Q)
+rownames(dat_chr9_LLS_660Q) <- rowns_chr9_LLS_660Q
+
+# OmniExpr array
+dat_chr9_LLS_OmniExpr <- read_tsv(file = "chr9.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr9_LLS_OmniExpr <- paste(dat_chr9_LLS_OmniExpr$CHROM, dat_chr9_LLS_OmniExpr$POS, sep = ":")
+dat_chr9_LLS_OmniExpr$CHROM <- dat_chr9_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr9_LLS_OmniExpr),]
+colnames(dat_chr9_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr9_LLS_OmniExpr <- as.matrix(dat_chr9_LLS_OmniExpr)
+rownames(dat_chr9_LLS_OmniExpr) <- rowns_chr9_LLS_OmniExpr
+
+# RS
+dat_chr9_RS <- read_tsv(file = "chr9.RS.DS.FORMAT", progress = FALSE)
+rowns_chr9_RS <- paste(dat_chr9_RS$CHROM, dat_chr9_RS$POS, sep = ":")
+dat_chr9_RS$CHROM <- dat_chr9_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr9_RS),]
+colnames(dat_chr9_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr9_RS <- as.matrix(dat_chr9_RS)
+rownames(dat_chr9_RS) <- rowns_chr9_RS
+
+# NTR
+# Affy6 array
+dat_chr9_NTR_Affy6 <- read_tsv(file = "chr9.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr9_NTR_Affy6 <- paste(dat_chr9_NTR_Affy6$CHROM,dat_chr9_NTR_Affy6$POS, sep = ":")
+dat_chr9_NTR_Affy6$CHROM <- dat_chr9_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr9_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr9_NTR_Affy6),]
+colnames(dat_chr9_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr9_NTR_Affy6 <- as.matrix(dat_chr9_NTR_Affy6)
+rownames(dat_chr9_NTR_Affy6) <- rowns_chr9_NTR_Affy6
+
+# GoNL array
+dat_chr9_NTR_GoNL <- read_tsv(file = "chr9.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr9_NTR_GoNL <- paste(dat_chr9_NTR_GoNL$CHROM, dat_chr9_NTR_GoNL$POS, sep = ":")
+dat_chr9_NTR_GoNL$CHROM <- dat_chr9_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr9_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr9_NTR_GoNL),]
+colnames(dat_chr9_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr9_NTR_GoNL <- as.matrix(dat_chr9_NTR_GoNL)
+rownames(dat_chr9_NTR_GoNL) <- rowns_chr9_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr9_BIOS_dosages<-list(dat_chr9_CODAM,dat_chr9_LL,dat_chr9_LLS_660Q,dat_chr9_LLS_OmniExpr,dat_chr9_NTR_Affy6,dat_chr9_NTR_GoNL,dat_chr9_PAN,dat_chr9_RS)
+rowns <- Reduce(intersect,lapply(chr9_BIOS_dosages, FUN = rownames))
+chr9_BIOS_dosages <- lapply(chr9_BIOS_dosages, function(x) x[rowns,])
+chr9_BIOS_dosages<-do.call(cbind,chr9_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr9_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr9_BIOS_dosages<-chr9_BIOS_dosages[rownames(MAFs),]
+chr9_BIOS_dosages<-chr9_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr9_BIOS_dosages,file = "chr9_BIOS_dosages.RData")
+```
+
+```{r}
+# chr10
+# CODAM
+dat_chr10_CODAM <- read_tsv(file = "chr10.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr10_CODAM <- paste(dat_chr10_CODAM$CHROM,dat_chr10_CODAM$POS, sep = ":")
+dat_chr10_CODAM$CHROM <- dat_chr10_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr10_CODAM),]
+colnames(dat_chr10_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr10_CODAM <- as.matrix(dat_chr10_CODAM)
+rownames(dat_chr10_CODAM) <- rowns_chr10_CODAM
+
+# LL
+dat_chr10_LL <- read_tsv(file = "chr10.LL.DS.FORMAT", progress = FALSE)
+rowns_chr10_LL <- paste(dat_chr10_LL$CHROM,dat_chr10_LL$POS, sep = ":")
+dat_chr10_LL$CHROM <- dat_chr10_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr10_LL),]
+colnames(dat_chr10_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr10_LL <- as.matrix(dat_chr10_LL)
+rownames(dat_chr10_LL) <- rowns_chr10_LL
+
+# PAN
+dat_chr10_PAN <- read_tsv(file = "chr10.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr10_PAN <- paste(dat_chr10_PAN$CHROM, dat_chr10_PAN$POS, sep = ":")
+dat_chr10_PAN$CHROM <- dat_chr10_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr10_PAN),]
+colnames(dat_chr10_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr10_PAN <- as.matrix(dat_chr10_PAN)
+rownames(dat_chr10_PAN) <- rowns_chr10_PAN
+
+# LLS
+# 660Q array
+dat_chr10_LLS_660Q <- read_tsv(file = "chr10.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr10_LLS_660Q <- paste(dat_chr10_LLS_660Q$CHROM, dat_chr10_LLS_660Q$POS, sep = ":")
+dat_chr10_LLS_660Q$CHROM <- dat_chr10_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr10_LLS_660Q),]
+colnames(dat_chr10_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr10_LLS_660Q <- as.matrix(dat_chr10_LLS_660Q)
+rownames(dat_chr10_LLS_660Q) <- rowns_chr10_LLS_660Q
+
+# OmniExpr array
+dat_chr10_LLS_OmniExpr <- read_tsv(file = "chr10.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr10_LLS_OmniExpr <- paste(dat_chr10_LLS_OmniExpr$CHROM, dat_chr10_LLS_OmniExpr$POS, sep = ":")
+dat_chr10_LLS_OmniExpr$CHROM <- dat_chr10_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr10_LLS_OmniExpr),]
+colnames(dat_chr10_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr10_LLS_OmniExpr <- as.matrix(dat_chr10_LLS_OmniExpr)
+rownames(dat_chr10_LLS_OmniExpr) <- rowns_chr10_LLS_OmniExpr
+
+# RS
+dat_chr10_RS <- read_tsv(file = "chr10.RS.DS.FORMAT", progress = FALSE)
+rowns_chr10_RS <- paste(dat_chr10_RS$CHROM, dat_chr10_RS$POS, sep = ":")
+dat_chr10_RS$CHROM <- dat_chr10_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr10_RS),]
+colnames(dat_chr10_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr10_RS <- as.matrix(dat_chr10_RS)
+rownames(dat_chr10_RS) <- rowns_chr10_RS
+
+# NTR
+# Affy6 array
+dat_chr10_NTR_Affy6 <- read_tsv(file = "chr10.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr10_NTR_Affy6 <- paste(dat_chr10_NTR_Affy6$CHROM,dat_chr10_NTR_Affy6$POS, sep = ":")
+dat_chr10_NTR_Affy6$CHROM <- dat_chr10_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr10_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr10_NTR_Affy6),]
+colnames(dat_chr10_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr10_NTR_Affy6 <- as.matrix(dat_chr10_NTR_Affy6)
+rownames(dat_chr10_NTR_Affy6) <- rowns_chr10_NTR_Affy6
+
+# GoNL array
+dat_chr10_NTR_GoNL <- read_tsv(file = "chr10.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr10_NTR_GoNL <- paste(dat_chr10_NTR_GoNL$CHROM, dat_chr10_NTR_GoNL$POS, sep = ":")
+dat_chr10_NTR_GoNL$CHROM <- dat_chr10_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr10_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr10_NTR_GoNL),]
+colnames(dat_chr10_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr10_NTR_GoNL <- as.matrix(dat_chr10_NTR_GoNL)
+rownames(dat_chr10_NTR_GoNL) <- rowns_chr10_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr10_BIOS_dosages<-list(dat_chr10_CODAM,dat_chr10_LL,dat_chr10_LLS_660Q,dat_chr10_LLS_OmniExpr,dat_chr10_NTR_Affy6,dat_chr10_NTR_GoNL,dat_chr10_PAN,dat_chr10_RS)
+rowns <- Reduce(intersect,lapply(chr10_BIOS_dosages, FUN = rownames))
+chr10_BIOS_dosages <- lapply(chr10_BIOS_dosages, function(x) x[rowns,])
+chr10_BIOS_dosages<-do.call(cbind,chr10_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr10_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr10_BIOS_dosages<-chr10_BIOS_dosages[rownames(MAFs),]
+chr10_BIOS_dosages<-chr10_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr10_BIOS_dosages,file = "chr10_BIOS_dosages.RData")
+```
+
+```{r}
+# chr11
+# CODAM
+dat_chr11_CODAM <- read_tsv(file = "chr11.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr11_CODAM <- paste(dat_chr11_CODAM$CHROM,dat_chr11_CODAM$POS, sep = ":")
+dat_chr11_CODAM$CHROM <- dat_chr11_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr11_CODAM),]
+colnames(dat_chr11_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr11_CODAM <- as.matrix(dat_chr11_CODAM)
+rownames(dat_chr11_CODAM) <- rowns_chr11_CODAM
+
+# LL
+dat_chr11_LL <- read_tsv(file = "chr11.LL.DS.FORMAT", progress = FALSE)
+rowns_chr11_LL <- paste(dat_chr11_LL$CHROM,dat_chr11_LL$POS, sep = ":")
+dat_chr11_LL$CHROM <- dat_chr11_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr11_LL),]
+colnames(dat_chr11_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr11_LL <- as.matrix(dat_chr11_LL)
+rownames(dat_chr11_LL) <- rowns_chr11_LL
+
+# PAN
+dat_chr11_PAN <- read_tsv(file = "chr11.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr11_PAN <- paste(dat_chr11_PAN$CHROM, dat_chr11_PAN$POS, sep = ":")
+dat_chr11_PAN$CHROM <- dat_chr11_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr11_PAN),]
+colnames(dat_chr11_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr11_PAN <- as.matrix(dat_chr11_PAN)
+rownames(dat_chr11_PAN) <- rowns_chr11_PAN
+
+# LLS
+# 660Q array
+dat_chr11_LLS_660Q <- read_tsv(file = "chr11.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr11_LLS_660Q <- paste(dat_chr11_LLS_660Q$CHROM, dat_chr11_LLS_660Q$POS, sep = ":")
+dat_chr11_LLS_660Q$CHROM <- dat_chr11_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr11_LLS_660Q),]
+colnames(dat_chr11_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr11_LLS_660Q <- as.matrix(dat_chr11_LLS_660Q)
+rownames(dat_chr11_LLS_660Q) <- rowns_chr11_LLS_660Q
+
+# OmniExpr array
+dat_chr11_LLS_OmniExpr <- read_tsv(file = "chr11.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr11_LLS_OmniExpr <- paste(dat_chr11_LLS_OmniExpr$CHROM, dat_chr11_LLS_OmniExpr$POS, sep = ":")
+dat_chr11_LLS_OmniExpr$CHROM <- dat_chr11_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr11_LLS_OmniExpr),]
+colnames(dat_chr11_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr11_LLS_OmniExpr <- as.matrix(dat_chr11_LLS_OmniExpr)
+rownames(dat_chr11_LLS_OmniExpr) <- rowns_chr11_LLS_OmniExpr
+
+# RS
+dat_chr11_RS <- read_tsv(file = "chr11.RS.DS.FORMAT", progress = FALSE)
+rowns_chr11_RS <- paste(dat_chr11_RS$CHROM, dat_chr11_RS$POS, sep = ":")
+dat_chr11_RS$CHROM <- dat_chr11_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr11_RS),]
+colnames(dat_chr11_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr11_RS <- as.matrix(dat_chr11_RS)
+rownames(dat_chr11_RS) <- rowns_chr11_RS
+
+# NTR
+# Affy6 array
+dat_chr11_NTR_Affy6 <- read_tsv(file = "chr11.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr11_NTR_Affy6 <- paste(dat_chr11_NTR_Affy6$CHROM,dat_chr11_NTR_Affy6$POS, sep = ":")
+dat_chr11_NTR_Affy6$CHROM <- dat_chr11_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr11_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr11_NTR_Affy6),]
+colnames(dat_chr11_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr11_NTR_Affy6 <- as.matrix(dat_chr11_NTR_Affy6)
+rownames(dat_chr11_NTR_Affy6) <- rowns_chr11_NTR_Affy6
+
+# GoNL array
+dat_chr11_NTR_GoNL <- read_tsv(file = "chr11.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr11_NTR_GoNL <- paste(dat_chr11_NTR_GoNL$CHROM, dat_chr11_NTR_GoNL$POS, sep = ":")
+dat_chr11_NTR_GoNL$CHROM <- dat_chr11_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr11_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr11_NTR_GoNL),]
+colnames(dat_chr11_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr11_NTR_GoNL <- as.matrix(dat_chr11_NTR_GoNL)
+rownames(dat_chr11_NTR_GoNL) <- rowns_chr11_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr11_BIOS_dosages<-list(dat_chr11_CODAM,dat_chr11_LL,dat_chr11_LLS_660Q,dat_chr11_LLS_OmniExpr,dat_chr11_NTR_Affy6,dat_chr11_NTR_GoNL,dat_chr11_PAN,dat_chr11_RS)
+rowns <- Reduce(intersect,lapply(chr11_BIOS_dosages, FUN = rownames))
+chr11_BIOS_dosages <- lapply(chr11_BIOS_dosages, function(x) x[rowns,])
+chr11_BIOS_dosages<-do.call(cbind,chr11_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr11_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr11_BIOS_dosages<-chr11_BIOS_dosages[rownames(MAFs),]
+chr11_BIOS_dosages<-chr11_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr11_BIOS_dosages,file = "chr11_BIOS_dosages.RData")
+```
+
+```{r}
+# chr12
+# CODAM
+dat_chr12_CODAM <- read_tsv(file = "chr12.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr12_CODAM <- paste(dat_chr12_CODAM$CHROM,dat_chr12_CODAM$POS, sep = ":")
+dat_chr12_CODAM$CHROM <- dat_chr12_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr12_CODAM),]
+colnames(dat_chr12_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr12_CODAM <- as.matrix(dat_chr12_CODAM)
+rownames(dat_chr12_CODAM) <- rowns_chr12_CODAM
+
+# LL
+dat_chr12_LL <- read_tsv(file = "chr12.LL.DS.FORMAT", progress = FALSE)
+rowns_chr12_LL <- paste(dat_chr12_LL$CHROM,dat_chr12_LL$POS, sep = ":")
+dat_chr12_LL$CHROM <- dat_chr12_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr12_LL),]
+colnames(dat_chr12_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr12_LL <- as.matrix(dat_chr12_LL)
+rownames(dat_chr12_LL) <- rowns_chr12_LL
+
+# PAN
+dat_chr12_PAN <- read_tsv(file = "chr12.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr12_PAN <- paste(dat_chr12_PAN$CHROM, dat_chr12_PAN$POS, sep = ":")
+dat_chr12_PAN$CHROM <- dat_chr12_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr12_PAN),]
+colnames(dat_chr12_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr12_PAN <- as.matrix(dat_chr12_PAN)
+rownames(dat_chr12_PAN) <- rowns_chr12_PAN
+
+# LLS
+# 660Q array
+dat_chr12_LLS_660Q <- read_tsv(file = "chr12.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr12_LLS_660Q <- paste(dat_chr12_LLS_660Q$CHROM, dat_chr12_LLS_660Q$POS, sep = ":")
+dat_chr12_LLS_660Q$CHROM <- dat_chr12_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr12_LLS_660Q),]
+colnames(dat_chr12_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr12_LLS_660Q <- as.matrix(dat_chr12_LLS_660Q)
+rownames(dat_chr12_LLS_660Q) <- rowns_chr12_LLS_660Q
+
+# OmniExpr array
+dat_chr12_LLS_OmniExpr <- read_tsv(file = "chr12.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr12_LLS_OmniExpr <- paste(dat_chr12_LLS_OmniExpr$CHROM, dat_chr12_LLS_OmniExpr$POS, sep = ":")
+dat_chr12_LLS_OmniExpr$CHROM <- dat_chr12_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr12_LLS_OmniExpr),]
+colnames(dat_chr12_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr12_LLS_OmniExpr <- as.matrix(dat_chr12_LLS_OmniExpr)
+rownames(dat_chr12_LLS_OmniExpr) <- rowns_chr12_LLS_OmniExpr
+
+# RS
+dat_chr12_RS <- read_tsv(file = "chr12.RS.DS.FORMAT", progress = FALSE)
+rowns_chr12_RS <- paste(dat_chr12_RS$CHROM, dat_chr12_RS$POS, sep = ":")
+dat_chr12_RS$CHROM <- dat_chr12_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr12_RS),]
+colnames(dat_chr12_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr12_RS <- as.matrix(dat_chr12_RS)
+rownames(dat_chr12_RS) <- rowns_chr12_RS
+
+# NTR
+# Affy6 array
+dat_chr12_NTR_Affy6 <- read_tsv(file = "chr12.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr12_NTR_Affy6 <- paste(dat_chr12_NTR_Affy6$CHROM,dat_chr12_NTR_Affy6$POS, sep = ":")
+dat_chr12_NTR_Affy6$CHROM <- dat_chr12_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr12_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr12_NTR_Affy6),]
+colnames(dat_chr12_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr12_NTR_Affy6 <- as.matrix(dat_chr12_NTR_Affy6)
+rownames(dat_chr12_NTR_Affy6) <- rowns_chr12_NTR_Affy6
+
+# GoNL array
+dat_chr12_NTR_GoNL <- read_tsv(file = "chr12.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr12_NTR_GoNL <- paste(dat_chr12_NTR_GoNL$CHROM, dat_chr12_NTR_GoNL$POS, sep = ":")
+dat_chr12_NTR_GoNL$CHROM <- dat_chr12_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr12_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr12_NTR_GoNL),]
+colnames(dat_chr12_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr12_NTR_GoNL <- as.matrix(dat_chr12_NTR_GoNL)
+rownames(dat_chr12_NTR_GoNL) <- rowns_chr12_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr12_BIOS_dosages<-list(dat_chr12_CODAM,dat_chr12_LL,dat_chr12_LLS_660Q,dat_chr12_LLS_OmniExpr,dat_chr12_NTR_Affy6,dat_chr12_NTR_GoNL,dat_chr12_PAN,dat_chr12_RS)
+rowns <- Reduce(intersect,lapply(chr12_BIOS_dosages, FUN = rownames))
+chr12_BIOS_dosages <- lapply(chr12_BIOS_dosages, function(x) x[rowns,])
+chr12_BIOS_dosages<-do.call(cbind,chr12_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr12_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr12_BIOS_dosages<-chr12_BIOS_dosages[rownames(MAFs),]
+chr12_BIOS_dosages<-chr12_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr12_BIOS_dosages,file = "chr12_BIOS_dosages.RData")
+```
+
+```{r}
+# chr13
+# CODAM
+dat_chr13_CODAM <- read_tsv(file = "chr13.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr13_CODAM <- paste(dat_chr13_CODAM$CHROM,dat_chr13_CODAM$POS, sep = ":")
+dat_chr13_CODAM$CHROM <- dat_chr13_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr13_CODAM),]
+colnames(dat_chr13_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr13_CODAM <- as.matrix(dat_chr13_CODAM)
+rownames(dat_chr13_CODAM) <- rowns_chr13_CODAM
+
+# LL
+dat_chr13_LL <- read_tsv(file = "chr13.LL.DS.FORMAT", progress = FALSE)
+rowns_chr13_LL <- paste(dat_chr13_LL$CHROM,dat_chr13_LL$POS, sep = ":")
+dat_chr13_LL$CHROM <- dat_chr13_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr13_LL),]
+colnames(dat_chr13_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr13_LL <- as.matrix(dat_chr13_LL)
+rownames(dat_chr13_LL) <- rowns_chr13_LL
+
+# PAN
+dat_chr13_PAN <- read_tsv(file = "chr13.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr13_PAN <- paste(dat_chr13_PAN$CHROM, dat_chr13_PAN$POS, sep = ":")
+dat_chr13_PAN$CHROM <- dat_chr13_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr13_PAN),]
+colnames(dat_chr13_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr13_PAN <- as.matrix(dat_chr13_PAN)
+rownames(dat_chr13_PAN) <- rowns_chr13_PAN
+
+# LLS
+# 660Q array
+dat_chr13_LLS_660Q <- read_tsv(file = "chr13.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr13_LLS_660Q <- paste(dat_chr13_LLS_660Q$CHROM, dat_chr13_LLS_660Q$POS, sep = ":")
+dat_chr13_LLS_660Q$CHROM <- dat_chr13_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr13_LLS_660Q),]
+colnames(dat_chr13_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr13_LLS_660Q <- as.matrix(dat_chr13_LLS_660Q)
+rownames(dat_chr13_LLS_660Q) <- rowns_chr13_LLS_660Q
+
+# OmniExpr array
+dat_chr13_LLS_OmniExpr <- read_tsv(file = "chr13.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr13_LLS_OmniExpr <- paste(dat_chr13_LLS_OmniExpr$CHROM, dat_chr13_LLS_OmniExpr$POS, sep = ":")
+dat_chr13_LLS_OmniExpr$CHROM <- dat_chr13_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr13_LLS_OmniExpr),]
+colnames(dat_chr13_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr13_LLS_OmniExpr <- as.matrix(dat_chr13_LLS_OmniExpr)
+rownames(dat_chr13_LLS_OmniExpr) <- rowns_chr13_LLS_OmniExpr
+
+# RS
+dat_chr13_RS <- read_tsv(file = "chr13.RS.DS.FORMAT", progress = FALSE)
+rowns_chr13_RS <- paste(dat_chr13_RS$CHROM, dat_chr13_RS$POS, sep = ":")
+dat_chr13_RS$CHROM <- dat_chr13_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr13_RS),]
+colnames(dat_chr13_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr13_RS <- as.matrix(dat_chr13_RS)
+rownames(dat_chr13_RS) <- rowns_chr13_RS
+
+# NTR
+# Affy6 array
+dat_chr13_NTR_Affy6 <- read_tsv(file = "chr13.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr13_NTR_Affy6 <- paste(dat_chr13_NTR_Affy6$CHROM,dat_chr13_NTR_Affy6$POS, sep = ":")
+dat_chr13_NTR_Affy6$CHROM <- dat_chr13_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr13_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr13_NTR_Affy6),]
+colnames(dat_chr13_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr13_NTR_Affy6 <- as.matrix(dat_chr13_NTR_Affy6)
+rownames(dat_chr13_NTR_Affy6) <- rowns_chr13_NTR_Affy6
+
+# GoNL array
+dat_chr13_NTR_GoNL <- read_tsv(file = "chr13.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr13_NTR_GoNL <- paste(dat_chr13_NTR_GoNL$CHROM, dat_chr13_NTR_GoNL$POS, sep = ":")
+dat_chr13_NTR_GoNL$CHROM <- dat_chr13_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr13_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr13_NTR_GoNL),]
+colnames(dat_chr13_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr13_NTR_GoNL <- as.matrix(dat_chr13_NTR_GoNL)
+rownames(dat_chr13_NTR_GoNL) <- rowns_chr13_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr13_BIOS_dosages<-list(dat_chr13_CODAM,dat_chr13_LL,dat_chr13_LLS_660Q,dat_chr13_LLS_OmniExpr,dat_chr13_NTR_Affy6,dat_chr13_NTR_GoNL,dat_chr13_PAN,dat_chr13_RS)
+rowns <- Reduce(intersect,lapply(chr13_BIOS_dosages, FUN = rownames))
+chr13_BIOS_dosages <- lapply(chr13_BIOS_dosages, function(x) x[rowns,])
+chr13_BIOS_dosages<-do.call(cbind,chr13_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr13_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr13_BIOS_dosages<-chr13_BIOS_dosages[rownames(MAFs),]
+chr13_BIOS_dosages<-chr13_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr13_BIOS_dosages,file = "chr13_BIOS_dosages.RData")
+```
+
+
+```{r}
+# chr14
+# CODAM
+dat_chr14_CODAM <- read_tsv(file = "chr14.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr14_CODAM <- paste(dat_chr14_CODAM$CHROM,dat_chr14_CODAM$POS, sep = ":")
+dat_chr14_CODAM$CHROM <- dat_chr14_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr14_CODAM),]
+colnames(dat_chr14_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr14_CODAM <- as.matrix(dat_chr14_CODAM)
+rownames(dat_chr14_CODAM) <- rowns_chr14_CODAM
+
+# LL
+dat_chr14_LL <- read_tsv(file = "chr14.LL.DS.FORMAT", progress = FALSE)
+rowns_chr14_LL <- paste(dat_chr14_LL$CHROM,dat_chr14_LL$POS, sep = ":")
+dat_chr14_LL$CHROM <- dat_chr14_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr14_LL),]
+colnames(dat_chr14_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr14_LL <- as.matrix(dat_chr14_LL)
+rownames(dat_chr14_LL) <- rowns_chr14_LL
+
+# PAN
+dat_chr14_PAN <- read_tsv(file = "chr14.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr14_PAN <- paste(dat_chr14_PAN$CHROM, dat_chr14_PAN$POS, sep = ":")
+dat_chr14_PAN$CHROM <- dat_chr14_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr14_PAN),]
+colnames(dat_chr14_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr14_PAN <- as.matrix(dat_chr14_PAN)
+rownames(dat_chr14_PAN) <- rowns_chr14_PAN
+
+# LLS
+# 660Q array
+dat_chr14_LLS_660Q <- read_tsv(file = "chr14.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr14_LLS_660Q <- paste(dat_chr14_LLS_660Q$CHROM, dat_chr14_LLS_660Q$POS, sep = ":")
+dat_chr14_LLS_660Q$CHROM <- dat_chr14_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr14_LLS_660Q),]
+colnames(dat_chr14_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr14_LLS_660Q <- as.matrix(dat_chr14_LLS_660Q)
+rownames(dat_chr14_LLS_660Q) <- rowns_chr14_LLS_660Q
+
+# OmniExpr array
+dat_chr14_LLS_OmniExpr <- read_tsv(file = "chr14.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr14_LLS_OmniExpr <- paste(dat_chr14_LLS_OmniExpr$CHROM, dat_chr14_LLS_OmniExpr$POS, sep = ":")
+dat_chr14_LLS_OmniExpr$CHROM <- dat_chr14_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr14_LLS_OmniExpr),]
+colnames(dat_chr14_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr14_LLS_OmniExpr <- as.matrix(dat_chr14_LLS_OmniExpr)
+rownames(dat_chr14_LLS_OmniExpr) <- rowns_chr14_LLS_OmniExpr
+
+# RS
+dat_chr14_RS <- read_tsv(file = "chr14.RS.DS.FORMAT", progress = FALSE)
+rowns_chr14_RS <- paste(dat_chr14_RS$CHROM, dat_chr14_RS$POS, sep = ":")
+dat_chr14_RS$CHROM <- dat_chr14_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr14_RS),]
+colnames(dat_chr14_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr14_RS <- as.matrix(dat_chr14_RS)
+rownames(dat_chr14_RS) <- rowns_chr14_RS
+
+# NTR
+# Affy6 array
+dat_chr14_NTR_Affy6 <- read_tsv(file = "chr14.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr14_NTR_Affy6 <- paste(dat_chr14_NTR_Affy6$CHROM,dat_chr14_NTR_Affy6$POS, sep = ":")
+dat_chr14_NTR_Affy6$CHROM <- dat_chr14_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr14_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr14_NTR_Affy6),]
+colnames(dat_chr14_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr14_NTR_Affy6 <- as.matrix(dat_chr14_NTR_Affy6)
+rownames(dat_chr14_NTR_Affy6) <- rowns_chr14_NTR_Affy6
+
+# GoNL array
+dat_chr14_NTR_GoNL <- read_tsv(file = "chr14.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr14_NTR_GoNL <- paste(dat_chr14_NTR_GoNL$CHROM, dat_chr14_NTR_GoNL$POS, sep = ":")
+dat_chr14_NTR_GoNL$CHROM <- dat_chr14_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr14_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr14_NTR_GoNL),]
+colnames(dat_chr14_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr14_NTR_GoNL <- as.matrix(dat_chr14_NTR_GoNL)
+rownames(dat_chr14_NTR_GoNL) <- rowns_chr14_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr14_BIOS_dosages<-list(dat_chr14_CODAM,dat_chr14_LL,dat_chr14_LLS_660Q,dat_chr14_LLS_OmniExpr,dat_chr14_NTR_Affy6,dat_chr14_NTR_GoNL,dat_chr14_PAN,dat_chr14_RS)
+rowns <- Reduce(intersect,lapply(chr14_BIOS_dosages, FUN = rownames))
+chr14_BIOS_dosages <- lapply(chr14_BIOS_dosages, function(x) x[rowns,])
+chr14_BIOS_dosages<-do.call(cbind,chr14_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr14_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr14_BIOS_dosages<-chr14_BIOS_dosages[rownames(MAFs),]
+chr14_BIOS_dosages<-chr14_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr14_BIOS_dosages,file = "chr14_BIOS_dosages.RData")
+```
+
+
+```{r}
+# chr15
+# CODAM
+dat_chr15_CODAM <- read_tsv(file = "chr15.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr15_CODAM <- paste(dat_chr15_CODAM$CHROM,dat_chr15_CODAM$POS, sep = ":")
+dat_chr15_CODAM$CHROM <- dat_chr15_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr15_CODAM),]
+colnames(dat_chr15_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr15_CODAM <- as.matrix(dat_chr15_CODAM)
+rownames(dat_chr15_CODAM) <- rowns_chr15_CODAM
+
+# LL
+dat_chr15_LL <- read_tsv(file = "chr15.LL.DS.FORMAT", progress = FALSE)
+rowns_chr15_LL <- paste(dat_chr15_LL$CHROM,dat_chr15_LL$POS, sep = ":")
+dat_chr15_LL$CHROM <- dat_chr15_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr15_LL),]
+colnames(dat_chr15_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr15_LL <- as.matrix(dat_chr15_LL)
+rownames(dat_chr15_LL) <- rowns_chr15_LL
+
+# PAN
+dat_chr15_PAN <- read_tsv(file = "chr15.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr15_PAN <- paste(dat_chr15_PAN$CHROM, dat_chr15_PAN$POS, sep = ":")
+dat_chr15_PAN$CHROM <- dat_chr15_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr15_PAN),]
+colnames(dat_chr15_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr15_PAN <- as.matrix(dat_chr15_PAN)
+rownames(dat_chr15_PAN) <- rowns_chr15_PAN
+
+# LLS
+# 660Q array
+dat_chr15_LLS_660Q <- read_tsv(file = "chr15.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr15_LLS_660Q <- paste(dat_chr15_LLS_660Q$CHROM, dat_chr15_LLS_660Q$POS, sep = ":")
+dat_chr15_LLS_660Q$CHROM <- dat_chr15_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr15_LLS_660Q),]
+colnames(dat_chr15_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr15_LLS_660Q <- as.matrix(dat_chr15_LLS_660Q)
+rownames(dat_chr15_LLS_660Q) <- rowns_chr15_LLS_660Q
+
+# OmniExpr array
+dat_chr15_LLS_OmniExpr <- read_tsv(file = "chr15.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr15_LLS_OmniExpr <- paste(dat_chr15_LLS_OmniExpr$CHROM, dat_chr15_LLS_OmniExpr$POS, sep = ":")
+dat_chr15_LLS_OmniExpr$CHROM <- dat_chr15_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr15_LLS_OmniExpr),]
+colnames(dat_chr15_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr15_LLS_OmniExpr <- as.matrix(dat_chr15_LLS_OmniExpr)
+rownames(dat_chr15_LLS_OmniExpr) <- rowns_chr15_LLS_OmniExpr
+
+# RS
+dat_chr15_RS <- read_tsv(file = "chr15.RS.DS.FORMAT", progress = FALSE)
+rowns_chr15_RS <- paste(dat_chr15_RS$CHROM, dat_chr15_RS$POS, sep = ":")
+dat_chr15_RS$CHROM <- dat_chr15_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr15_RS),]
+colnames(dat_chr15_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr15_RS <- as.matrix(dat_chr15_RS)
+rownames(dat_chr15_RS) <- rowns_chr15_RS
+
+# NTR
+# Affy6 array
+dat_chr15_NTR_Affy6 <- read_tsv(file = "chr15.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr15_NTR_Affy6 <- paste(dat_chr15_NTR_Affy6$CHROM,dat_chr15_NTR_Affy6$POS, sep = ":")
+dat_chr15_NTR_Affy6$CHROM <- dat_chr15_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr15_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr15_NTR_Affy6),]
+colnames(dat_chr15_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr15_NTR_Affy6 <- as.matrix(dat_chr15_NTR_Affy6)
+rownames(dat_chr15_NTR_Affy6) <- rowns_chr15_NTR_Affy6
+
+# GoNL array
+dat_chr15_NTR_GoNL <- read_tsv(file = "chr15.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr15_NTR_GoNL <- paste(dat_chr15_NTR_GoNL$CHROM, dat_chr15_NTR_GoNL$POS, sep = ":")
+dat_chr15_NTR_GoNL$CHROM <- dat_chr15_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr15_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr15_NTR_GoNL),]
+colnames(dat_chr15_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr15_NTR_GoNL <- as.matrix(dat_chr15_NTR_GoNL)
+rownames(dat_chr15_NTR_GoNL) <- rowns_chr15_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr15_BIOS_dosages<-list(dat_chr15_CODAM,dat_chr15_LL,dat_chr15_LLS_660Q,dat_chr15_LLS_OmniExpr,dat_chr15_NTR_Affy6,dat_chr15_NTR_GoNL,dat_chr15_PAN,dat_chr15_RS)
+rowns <- Reduce(intersect,lapply(chr15_BIOS_dosages, FUN = rownames))
+chr15_BIOS_dosages <- lapply(chr15_BIOS_dosages, function(x) x[rowns,])
+chr15_BIOS_dosages<-do.call(cbind,chr15_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr15_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr15_BIOS_dosages<-chr15_BIOS_dosages[rownames(MAFs),]
+chr15_BIOS_dosages<-chr15_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr15_BIOS_dosages,file = "chr15_BIOS_dosages.RData")
+```
+
+```{r}
+# chr16
+# CODAM
+dat_chr16_CODAM <- read_tsv(file = "chr16.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr16_CODAM <- paste(dat_chr16_CODAM$CHROM,dat_chr16_CODAM$POS, sep = ":")
+dat_chr16_CODAM$CHROM <- dat_chr16_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr16_CODAM),]
+colnames(dat_chr16_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr16_CODAM <- as.matrix(dat_chr16_CODAM)
+rownames(dat_chr16_CODAM) <- rowns_chr16_CODAM
+
+# LL
+dat_chr16_LL <- read_tsv(file = "chr16.LL.DS.FORMAT", progress = FALSE)
+rowns_chr16_LL <- paste(dat_chr16_LL$CHROM,dat_chr16_LL$POS, sep = ":")
+dat_chr16_LL$CHROM <- dat_chr16_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr16_LL),]
+colnames(dat_chr16_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr16_LL <- as.matrix(dat_chr16_LL)
+rownames(dat_chr16_LL) <- rowns_chr16_LL
+
+# PAN
+dat_chr16_PAN <- read_tsv(file = "chr16.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr16_PAN <- paste(dat_chr16_PAN$CHROM, dat_chr16_PAN$POS, sep = ":")
+dat_chr16_PAN$CHROM <- dat_chr16_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr16_PAN),]
+colnames(dat_chr16_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr16_PAN <- as.matrix(dat_chr16_PAN)
+rownames(dat_chr16_PAN) <- rowns_chr16_PAN
+
+# LLS
+# 660Q array
+dat_chr16_LLS_660Q <- read_tsv(file = "chr16.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr16_LLS_660Q <- paste(dat_chr16_LLS_660Q$CHROM, dat_chr16_LLS_660Q$POS, sep = ":")
+dat_chr16_LLS_660Q$CHROM <- dat_chr16_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr16_LLS_660Q),]
+colnames(dat_chr16_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr16_LLS_660Q <- as.matrix(dat_chr16_LLS_660Q)
+rownames(dat_chr16_LLS_660Q) <- rowns_chr16_LLS_660Q
+
+# OmniExpr array
+dat_chr16_LLS_OmniExpr <- read_tsv(file = "chr16.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr16_LLS_OmniExpr <- paste(dat_chr16_LLS_OmniExpr$CHROM, dat_chr16_LLS_OmniExpr$POS, sep = ":")
+dat_chr16_LLS_OmniExpr$CHROM <- dat_chr16_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr16_LLS_OmniExpr),]
+colnames(dat_chr16_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr16_LLS_OmniExpr <- as.matrix(dat_chr16_LLS_OmniExpr)
+rownames(dat_chr16_LLS_OmniExpr) <- rowns_chr16_LLS_OmniExpr
+
+# RS
+dat_chr16_RS <- read_tsv(file = "chr16.RS.DS.FORMAT", progress = FALSE)
+rowns_chr16_RS <- paste(dat_chr16_RS$CHROM, dat_chr16_RS$POS, sep = ":")
+dat_chr16_RS$CHROM <- dat_chr16_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr16_RS),]
+colnames(dat_chr16_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr16_RS <- as.matrix(dat_chr16_RS)
+rownames(dat_chr16_RS) <- rowns_chr16_RS
+
+# NTR
+# Affy6 array
+dat_chr16_NTR_Affy6 <- read_tsv(file = "chr16.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr16_NTR_Affy6 <- paste(dat_chr16_NTR_Affy6$CHROM,dat_chr16_NTR_Affy6$POS, sep = ":")
+dat_chr16_NTR_Affy6$CHROM <- dat_chr16_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr16_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr16_NTR_Affy6),]
+colnames(dat_chr16_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr16_NTR_Affy6 <- as.matrix(dat_chr16_NTR_Affy6)
+rownames(dat_chr16_NTR_Affy6) <- rowns_chr16_NTR_Affy6
+
+# GoNL array
+dat_chr16_NTR_GoNL <- read_tsv(file = "chr16.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr16_NTR_GoNL <- paste(dat_chr16_NTR_GoNL$CHROM, dat_chr16_NTR_GoNL$POS, sep = ":")
+dat_chr16_NTR_GoNL$CHROM <- dat_chr16_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr16_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr16_NTR_GoNL),]
+colnames(dat_chr16_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr16_NTR_GoNL <- as.matrix(dat_chr16_NTR_GoNL)
+rownames(dat_chr16_NTR_GoNL) <- rowns_chr16_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr16_BIOS_dosages<-list(dat_chr16_CODAM,dat_chr16_LL,dat_chr16_LLS_660Q,dat_chr16_LLS_OmniExpr,dat_chr16_NTR_Affy6,dat_chr16_NTR_GoNL,dat_chr16_PAN,dat_chr16_RS)
+rowns <- Reduce(intersect,lapply(chr16_BIOS_dosages, FUN = rownames))
+chr16_BIOS_dosages <- lapply(chr16_BIOS_dosages, function(x) x[rowns,])
+chr16_BIOS_dosages<-do.call(cbind,chr16_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr16_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr16_BIOS_dosages<-chr16_BIOS_dosages[rownames(MAFs),]
+chr16_BIOS_dosages<-chr16_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr16_BIOS_dosages,file = "chr16_BIOS_dosages.RData")
+```
+
+```{r}
+# chr17
+# CODAM
+dat_chr17_CODAM <- read_tsv(file = "chr17.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr17_CODAM <- paste(dat_chr17_CODAM$CHROM,dat_chr17_CODAM$POS, sep = ":")
+dat_chr17_CODAM$CHROM <- dat_chr17_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr17_CODAM),]
+colnames(dat_chr17_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr17_CODAM <- as.matrix(dat_chr17_CODAM)
+rownames(dat_chr17_CODAM) <- rowns_chr17_CODAM
+
+# LL
+dat_chr17_LL <- read_tsv(file = "chr17.LL.DS.FORMAT", progress = FALSE)
+rowns_chr17_LL <- paste(dat_chr17_LL$CHROM,dat_chr17_LL$POS, sep = ":")
+dat_chr17_LL$CHROM <- dat_chr17_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr17_LL),]
+colnames(dat_chr17_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr17_LL <- as.matrix(dat_chr17_LL)
+rownames(dat_chr17_LL) <- rowns_chr17_LL
+
+# PAN
+dat_chr17_PAN <- read_tsv(file = "chr17.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr17_PAN <- paste(dat_chr17_PAN$CHROM, dat_chr17_PAN$POS, sep = ":")
+dat_chr17_PAN$CHROM <- dat_chr17_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr17_PAN),]
+colnames(dat_chr17_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr17_PAN <- as.matrix(dat_chr17_PAN)
+rownames(dat_chr17_PAN) <- rowns_chr17_PAN
+
+# LLS
+# 660Q array
+dat_chr17_LLS_660Q <- read_tsv(file = "chr17.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr17_LLS_660Q <- paste(dat_chr17_LLS_660Q$CHROM, dat_chr17_LLS_660Q$POS, sep = ":")
+dat_chr17_LLS_660Q$CHROM <- dat_chr17_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr17_LLS_660Q),]
+colnames(dat_chr17_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr17_LLS_660Q <- as.matrix(dat_chr17_LLS_660Q)
+rownames(dat_chr17_LLS_660Q) <- rowns_chr17_LLS_660Q
+
+# OmniExpr array
+dat_chr17_LLS_OmniExpr <- read_tsv(file = "chr17.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr17_LLS_OmniExpr <- paste(dat_chr17_LLS_OmniExpr$CHROM, dat_chr17_LLS_OmniExpr$POS, sep = ":")
+dat_chr17_LLS_OmniExpr$CHROM <- dat_chr17_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr17_LLS_OmniExpr),]
+colnames(dat_chr17_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr17_LLS_OmniExpr <- as.matrix(dat_chr17_LLS_OmniExpr)
+rownames(dat_chr17_LLS_OmniExpr) <- rowns_chr17_LLS_OmniExpr
+
+# RS
+dat_chr17_RS <- read_tsv(file = "chr17.RS.DS.FORMAT", progress = FALSE)
+rowns_chr17_RS <- paste(dat_chr17_RS$CHROM, dat_chr17_RS$POS, sep = ":")
+dat_chr17_RS$CHROM <- dat_chr17_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr17_RS),]
+colnames(dat_chr17_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr17_RS <- as.matrix(dat_chr17_RS)
+rownames(dat_chr17_RS) <- rowns_chr17_RS
+
+# NTR
+# Affy6 array
+dat_chr17_NTR_Affy6 <- read_tsv(file = "chr17.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr17_NTR_Affy6 <- paste(dat_chr17_NTR_Affy6$CHROM,dat_chr17_NTR_Affy6$POS, sep = ":")
+dat_chr17_NTR_Affy6$CHROM <- dat_chr17_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr17_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr17_NTR_Affy6),]
+colnames(dat_chr17_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr17_NTR_Affy6 <- as.matrix(dat_chr17_NTR_Affy6)
+rownames(dat_chr17_NTR_Affy6) <- rowns_chr17_NTR_Affy6
+
+# GoNL array
+dat_chr17_NTR_GoNL <- read_tsv(file = "chr17.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr17_NTR_GoNL <- paste(dat_chr17_NTR_GoNL$CHROM, dat_chr17_NTR_GoNL$POS, sep = ":")
+dat_chr17_NTR_GoNL$CHROM <- dat_chr17_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr17_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr17_NTR_GoNL),]
+colnames(dat_chr17_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr17_NTR_GoNL <- as.matrix(dat_chr17_NTR_GoNL)
+rownames(dat_chr17_NTR_GoNL) <- rowns_chr17_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr17_BIOS_dosages<-list(dat_chr17_CODAM,dat_chr17_LL,dat_chr17_LLS_660Q,dat_chr17_LLS_OmniExpr,dat_chr17_NTR_Affy6,dat_chr17_NTR_GoNL,dat_chr17_PAN,dat_chr17_RS)
+rowns <- Reduce(intersect,lapply(chr17_BIOS_dosages, FUN = rownames))
+chr17_BIOS_dosages <- lapply(chr17_BIOS_dosages, function(x) x[rowns,])
+chr17_BIOS_dosages<-do.call(cbind,chr17_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr17_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr17_BIOS_dosages<-chr17_BIOS_dosages[rownames(MAFs),]
+chr17_BIOS_dosages<-chr17_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr17_BIOS_dosages,file = "chr17_BIOS_dosages.RData")
+```
+
+```{r}
+# chr18
+# CODAM
+dat_chr18_CODAM <- read_tsv(file = "chr18.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr18_CODAM <- paste(dat_chr18_CODAM$CHROM,dat_chr18_CODAM$POS, sep = ":")
+dat_chr18_CODAM$CHROM <- dat_chr18_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr18_CODAM),]
+colnames(dat_chr18_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr18_CODAM <- as.matrix(dat_chr18_CODAM)
+rownames(dat_chr18_CODAM) <- rowns_chr18_CODAM
+
+# LL
+dat_chr18_LL <- read_tsv(file = "chr18.LL.DS.FORMAT", progress = FALSE)
+rowns_chr18_LL <- paste(dat_chr18_LL$CHROM,dat_chr18_LL$POS, sep = ":")
+dat_chr18_LL$CHROM <- dat_chr18_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr18_LL),]
+colnames(dat_chr18_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr18_LL <- as.matrix(dat_chr18_LL)
+rownames(dat_chr18_LL) <- rowns_chr18_LL
+
+# PAN
+dat_chr18_PAN <- read_tsv(file = "chr18.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr18_PAN <- paste(dat_chr18_PAN$CHROM, dat_chr18_PAN$POS, sep = ":")
+dat_chr18_PAN$CHROM <- dat_chr18_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr18_PAN),]
+colnames(dat_chr18_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr18_PAN <- as.matrix(dat_chr18_PAN)
+rownames(dat_chr18_PAN) <- rowns_chr18_PAN
+
+# LLS
+# 660Q array
+dat_chr18_LLS_660Q <- read_tsv(file = "chr18.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr18_LLS_660Q <- paste(dat_chr18_LLS_660Q$CHROM, dat_chr18_LLS_660Q$POS, sep = ":")
+dat_chr18_LLS_660Q$CHROM <- dat_chr18_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr18_LLS_660Q),]
+colnames(dat_chr18_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr18_LLS_660Q <- as.matrix(dat_chr18_LLS_660Q)
+rownames(dat_chr18_LLS_660Q) <- rowns_chr18_LLS_660Q
+
+# OmniExpr array
+dat_chr18_LLS_OmniExpr <- read_tsv(file = "chr18.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr18_LLS_OmniExpr <- paste(dat_chr18_LLS_OmniExpr$CHROM, dat_chr18_LLS_OmniExpr$POS, sep = ":")
+dat_chr18_LLS_OmniExpr$CHROM <- dat_chr18_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr18_LLS_OmniExpr),]
+colnames(dat_chr18_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr18_LLS_OmniExpr <- as.matrix(dat_chr18_LLS_OmniExpr)
+rownames(dat_chr18_LLS_OmniExpr) <- rowns_chr18_LLS_OmniExpr
+
+# RS
+dat_chr18_RS <- read_tsv(file = "chr18.RS.DS.FORMAT", progress = FALSE)
+rowns_chr18_RS <- paste(dat_chr18_RS$CHROM, dat_chr18_RS$POS, sep = ":")
+dat_chr18_RS$CHROM <- dat_chr18_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr18_RS),]
+colnames(dat_chr18_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr18_RS <- as.matrix(dat_chr18_RS)
+rownames(dat_chr18_RS) <- rowns_chr18_RS
+
+# NTR
+# Affy6 array
+dat_chr18_NTR_Affy6 <- read_tsv(file = "chr18.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr18_NTR_Affy6 <- paste(dat_chr18_NTR_Affy6$CHROM,dat_chr18_NTR_Affy6$POS, sep = ":")
+dat_chr18_NTR_Affy6$CHROM <- dat_chr18_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr18_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr18_NTR_Affy6),]
+colnames(dat_chr18_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr18_NTR_Affy6 <- as.matrix(dat_chr18_NTR_Affy6)
+rownames(dat_chr18_NTR_Affy6) <- rowns_chr18_NTR_Affy6
+
+# GoNL array
+dat_chr18_NTR_GoNL <- read_tsv(file = "chr18.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr18_NTR_GoNL <- paste(dat_chr18_NTR_GoNL$CHROM, dat_chr18_NTR_GoNL$POS, sep = ":")
+dat_chr18_NTR_GoNL$CHROM <- dat_chr18_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr18_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr18_NTR_GoNL),]
+colnames(dat_chr18_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr18_NTR_GoNL <- as.matrix(dat_chr18_NTR_GoNL)
+rownames(dat_chr18_NTR_GoNL) <- rowns_chr18_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr18_BIOS_dosages<-list(dat_chr18_CODAM,dat_chr18_LL,dat_chr18_LLS_660Q,dat_chr18_LLS_OmniExpr,dat_chr18_NTR_Affy6,dat_chr18_NTR_GoNL,dat_chr18_PAN,dat_chr18_RS)
+rowns <- Reduce(intersect,lapply(chr18_BIOS_dosages, FUN = rownames))
+chr18_BIOS_dosages <- lapply(chr18_BIOS_dosages, function(x) x[rowns,])
+chr18_BIOS_dosages<-do.call(cbind,chr18_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr18_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr18_BIOS_dosages<-chr18_BIOS_dosages[rownames(MAFs),]
+chr18_BIOS_dosages<-chr18_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr18_BIOS_dosages,file = "chr18_BIOS_dosages.RData")
+```
+
+```{r}
+# chr19
+# CODAM
+dat_chr19_CODAM <- read_tsv(file = "chr19.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr19_CODAM <- paste(dat_chr19_CODAM$CHROM,dat_chr19_CODAM$POS, sep = ":")
+dat_chr19_CODAM$CHROM <- dat_chr19_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr19_CODAM),]
+colnames(dat_chr19_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr19_CODAM <- as.matrix(dat_chr19_CODAM)
+rownames(dat_chr19_CODAM) <- rowns_chr19_CODAM
+
+# LL
+dat_chr19_LL <- read_tsv(file = "chr19.LL.DS.FORMAT", progress = FALSE)
+rowns_chr19_LL <- paste(dat_chr19_LL$CHROM,dat_chr19_LL$POS, sep = ":")
+dat_chr19_LL$CHROM <- dat_chr19_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr19_LL),]
+colnames(dat_chr19_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr19_LL <- as.matrix(dat_chr19_LL)
+rownames(dat_chr19_LL) <- rowns_chr19_LL
+
+# PAN
+dat_chr19_PAN <- read_tsv(file = "chr19.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr19_PAN <- paste(dat_chr19_PAN$CHROM, dat_chr19_PAN$POS, sep = ":")
+dat_chr19_PAN$CHROM <- dat_chr19_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr19_PAN),]
+colnames(dat_chr19_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr19_PAN <- as.matrix(dat_chr19_PAN)
+rownames(dat_chr19_PAN) <- rowns_chr19_PAN
+
+# LLS
+# 660Q array
+dat_chr19_LLS_660Q <- read_tsv(file = "chr19.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr19_LLS_660Q <- paste(dat_chr19_LLS_660Q$CHROM, dat_chr19_LLS_660Q$POS, sep = ":")
+dat_chr19_LLS_660Q$CHROM <- dat_chr19_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr19_LLS_660Q),]
+colnames(dat_chr19_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr19_LLS_660Q <- as.matrix(dat_chr19_LLS_660Q)
+rownames(dat_chr19_LLS_660Q) <- rowns_chr19_LLS_660Q
+
+# OmniExpr array
+dat_chr19_LLS_OmniExpr <- read_tsv(file = "chr19.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr19_LLS_OmniExpr <- paste(dat_chr19_LLS_OmniExpr$CHROM, dat_chr19_LLS_OmniExpr$POS, sep = ":")
+dat_chr19_LLS_OmniExpr$CHROM <- dat_chr19_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr19_LLS_OmniExpr),]
+colnames(dat_chr19_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr19_LLS_OmniExpr <- as.matrix(dat_chr19_LLS_OmniExpr)
+rownames(dat_chr19_LLS_OmniExpr) <- rowns_chr19_LLS_OmniExpr
+
+# RS
+dat_chr19_RS <- read_tsv(file = "chr19.RS.DS.FORMAT", progress = FALSE)
+rowns_chr19_RS <- paste(dat_chr19_RS$CHROM, dat_chr19_RS$POS, sep = ":")
+dat_chr19_RS$CHROM <- dat_chr19_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr19_RS),]
+colnames(dat_chr19_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr19_RS <- as.matrix(dat_chr19_RS)
+rownames(dat_chr19_RS) <- rowns_chr19_RS
+
+# NTR
+# Affy6 array
+dat_chr19_NTR_Affy6 <- read_tsv(file = "chr19.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr19_NTR_Affy6 <- paste(dat_chr19_NTR_Affy6$CHROM,dat_chr19_NTR_Affy6$POS, sep = ":")
+dat_chr19_NTR_Affy6$CHROM <- dat_chr19_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr19_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr19_NTR_Affy6),]
+colnames(dat_chr19_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr19_NTR_Affy6 <- as.matrix(dat_chr19_NTR_Affy6)
+rownames(dat_chr19_NTR_Affy6) <- rowns_chr19_NTR_Affy6
+
+# GoNL array
+dat_chr19_NTR_GoNL <- read_tsv(file = "chr19.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr19_NTR_GoNL <- paste(dat_chr19_NTR_GoNL$CHROM, dat_chr19_NTR_GoNL$POS, sep = ":")
+dat_chr19_NTR_GoNL$CHROM <- dat_chr19_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr19_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr19_NTR_GoNL),]
+colnames(dat_chr19_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr19_NTR_GoNL <- as.matrix(dat_chr19_NTR_GoNL)
+rownames(dat_chr19_NTR_GoNL) <- rowns_chr19_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr19_BIOS_dosages<-list(dat_chr19_CODAM,dat_chr19_LL,dat_chr19_LLS_660Q,dat_chr19_LLS_OmniExpr,dat_chr19_NTR_Affy6,dat_chr19_NTR_GoNL,dat_chr19_PAN,dat_chr19_RS)
+rowns <- Reduce(intersect,lapply(chr19_BIOS_dosages, FUN = rownames))
+chr19_BIOS_dosages <- lapply(chr19_BIOS_dosages, function(x) x[rowns,])
+chr19_BIOS_dosages<-do.call(cbind,chr19_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr19_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr19_BIOS_dosages<-chr19_BIOS_dosages[rownames(MAFs),]
+chr19_BIOS_dosages<-chr19_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr19_BIOS_dosages,file = "chr19_BIOS_dosages.RData")
+```
+
+```{r}
+# chr20
+# CODAM
+dat_chr20_CODAM <- read_tsv(file = "chr20.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr20_CODAM <- paste(dat_chr20_CODAM$CHROM,dat_chr20_CODAM$POS, sep = ":")
+dat_chr20_CODAM$CHROM <- dat_chr20_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr20_CODAM),]
+colnames(dat_chr20_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr20_CODAM <- as.matrix(dat_chr20_CODAM)
+rownames(dat_chr20_CODAM) <- rowns_chr20_CODAM
+
+# LL
+dat_chr20_LL <- read_tsv(file = "chr20.LL.DS.FORMAT", progress = FALSE)
+rowns_chr20_LL <- paste(dat_chr20_LL$CHROM,dat_chr20_LL$POS, sep = ":")
+dat_chr20_LL$CHROM <- dat_chr20_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr20_LL),]
+colnames(dat_chr20_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr20_LL <- as.matrix(dat_chr20_LL)
+rownames(dat_chr20_LL) <- rowns_chr20_LL
+
+# PAN
+dat_chr20_PAN <- read_tsv(file = "chr20.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr20_PAN <- paste(dat_chr20_PAN$CHROM, dat_chr20_PAN$POS, sep = ":")
+dat_chr20_PAN$CHROM <- dat_chr20_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr20_PAN),]
+colnames(dat_chr20_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr20_PAN <- as.matrix(dat_chr20_PAN)
+rownames(dat_chr20_PAN) <- rowns_chr20_PAN
+
+# LLS
+# 660Q array
+dat_chr20_LLS_660Q <- read_tsv(file = "chr20.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr20_LLS_660Q <- paste(dat_chr20_LLS_660Q$CHROM, dat_chr20_LLS_660Q$POS, sep = ":")
+dat_chr20_LLS_660Q$CHROM <- dat_chr20_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr20_LLS_660Q),]
+colnames(dat_chr20_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr20_LLS_660Q <- as.matrix(dat_chr20_LLS_660Q)
+rownames(dat_chr20_LLS_660Q) <- rowns_chr20_LLS_660Q
+
+# OmniExpr array
+dat_chr20_LLS_OmniExpr <- read_tsv(file = "chr20.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr20_LLS_OmniExpr <- paste(dat_chr20_LLS_OmniExpr$CHROM, dat_chr20_LLS_OmniExpr$POS, sep = ":")
+dat_chr20_LLS_OmniExpr$CHROM <- dat_chr20_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr20_LLS_OmniExpr),]
+colnames(dat_chr20_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr20_LLS_OmniExpr <- as.matrix(dat_chr20_LLS_OmniExpr)
+rownames(dat_chr20_LLS_OmniExpr) <- rowns_chr20_LLS_OmniExpr
+
+# RS
+dat_chr20_RS <- read_tsv(file = "chr20.RS.DS.FORMAT", progress = FALSE)
+rowns_chr20_RS <- paste(dat_chr20_RS$CHROM, dat_chr20_RS$POS, sep = ":")
+dat_chr20_RS$CHROM <- dat_chr20_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr20_RS),]
+colnames(dat_chr20_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr20_RS <- as.matrix(dat_chr20_RS)
+rownames(dat_chr20_RS) <- rowns_chr20_RS
+
+# NTR
+# Affy6 array
+dat_chr20_NTR_Affy6 <- read_tsv(file = "chr20.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr20_NTR_Affy6 <- paste(dat_chr20_NTR_Affy6$CHROM,dat_chr20_NTR_Affy6$POS, sep = ":")
+dat_chr20_NTR_Affy6$CHROM <- dat_chr20_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr20_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr20_NTR_Affy6),]
+colnames(dat_chr20_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr20_NTR_Affy6 <- as.matrix(dat_chr20_NTR_Affy6)
+rownames(dat_chr20_NTR_Affy6) <- rowns_chr20_NTR_Affy6
+
+# GoNL array
+dat_chr20_NTR_GoNL <- read_tsv(file = "chr20.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr20_NTR_GoNL <- paste(dat_chr20_NTR_GoNL$CHROM, dat_chr20_NTR_GoNL$POS, sep = ":")
+dat_chr20_NTR_GoNL$CHROM <- dat_chr20_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr20_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr20_NTR_GoNL),]
+colnames(dat_chr20_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr20_NTR_GoNL <- as.matrix(dat_chr20_NTR_GoNL)
+rownames(dat_chr20_NTR_GoNL) <- rowns_chr20_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr20_BIOS_dosages<-list(dat_chr20_CODAM,dat_chr20_LL,dat_chr20_LLS_660Q,dat_chr20_LLS_OmniExpr,dat_chr20_NTR_Affy6,dat_chr20_NTR_GoNL,dat_chr20_PAN,dat_chr20_RS)
+rowns <- Reduce(intersect,lapply(chr20_BIOS_dosages, FUN = rownames))
+chr20_BIOS_dosages <- lapply(chr20_BIOS_dosages, function(x) x[rowns,])
+chr20_BIOS_dosages<-do.call(cbind,chr20_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr20_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr20_BIOS_dosages<-chr20_BIOS_dosages[rownames(MAFs),]
+chr20_BIOS_dosages<-chr20_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr20_BIOS_dosages,file = "chr20_BIOS_dosages.RData")
+```
+
+```{r}
+# chr21
+# CODAM
+dat_chr21_CODAM <- read_tsv(file = "chr21.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr21_CODAM <- paste(dat_chr21_CODAM$CHROM,dat_chr21_CODAM$POS, sep = ":")
+dat_chr21_CODAM$CHROM <- dat_chr21_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr21_CODAM),]
+colnames(dat_chr21_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr21_CODAM <- as.matrix(dat_chr21_CODAM)
+rownames(dat_chr21_CODAM) <- rowns_chr21_CODAM
+
+# LL
+dat_chr21_LL <- read_tsv(file = "chr21.LL.DS.FORMAT", progress = FALSE)
+rowns_chr21_LL <- paste(dat_chr21_LL$CHROM,dat_chr21_LL$POS, sep = ":")
+dat_chr21_LL$CHROM <- dat_chr21_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr21_LL),]
+colnames(dat_chr21_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr21_LL <- as.matrix(dat_chr21_LL)
+rownames(dat_chr21_LL) <- rowns_chr21_LL
+
+# PAN
+dat_chr21_PAN <- read_tsv(file = "chr21.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr21_PAN <- paste(dat_chr21_PAN$CHROM, dat_chr21_PAN$POS, sep = ":")
+dat_chr21_PAN$CHROM <- dat_chr21_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr21_PAN),]
+colnames(dat_chr21_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr21_PAN <- as.matrix(dat_chr21_PAN)
+rownames(dat_chr21_PAN) <- rowns_chr21_PAN
+
+# LLS
+# 660Q array
+dat_chr21_LLS_660Q <- read_tsv(file = "chr21.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr21_LLS_660Q <- paste(dat_chr21_LLS_660Q$CHROM, dat_chr21_LLS_660Q$POS, sep = ":")
+dat_chr21_LLS_660Q$CHROM <- dat_chr21_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr21_LLS_660Q),]
+colnames(dat_chr21_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr21_LLS_660Q <- as.matrix(dat_chr21_LLS_660Q)
+rownames(dat_chr21_LLS_660Q) <- rowns_chr21_LLS_660Q
+
+# OmniExpr array
+dat_chr21_LLS_OmniExpr <- read_tsv(file = "chr21.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr21_LLS_OmniExpr <- paste(dat_chr21_LLS_OmniExpr$CHROM, dat_chr21_LLS_OmniExpr$POS, sep = ":")
+dat_chr21_LLS_OmniExpr$CHROM <- dat_chr21_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr21_LLS_OmniExpr),]
+colnames(dat_chr21_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr21_LLS_OmniExpr <- as.matrix(dat_chr21_LLS_OmniExpr)
+rownames(dat_chr21_LLS_OmniExpr) <- rowns_chr21_LLS_OmniExpr
+
+# RS
+dat_chr21_RS <- read_tsv(file = "chr21.RS.DS.FORMAT", progress = FALSE)
+rowns_chr21_RS <- paste(dat_chr21_RS$CHROM, dat_chr21_RS$POS, sep = ":")
+dat_chr21_RS$CHROM <- dat_chr21_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr21_RS),]
+colnames(dat_chr21_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr21_RS <- as.matrix(dat_chr21_RS)
+rownames(dat_chr21_RS) <- rowns_chr21_RS
+
+# NTR
+# Affy6 array
+dat_chr21_NTR_Affy6 <- read_tsv(file = "chr21.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr21_NTR_Affy6 <- paste(dat_chr21_NTR_Affy6$CHROM,dat_chr21_NTR_Affy6$POS, sep = ":")
+dat_chr21_NTR_Affy6$CHROM <- dat_chr21_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr21_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr21_NTR_Affy6),]
+colnames(dat_chr21_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr21_NTR_Affy6 <- as.matrix(dat_chr21_NTR_Affy6)
+rownames(dat_chr21_NTR_Affy6) <- rowns_chr21_NTR_Affy6
+
+# GoNL array
+dat_chr21_NTR_GoNL <- read_tsv(file = "chr21.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr21_NTR_GoNL <- paste(dat_chr21_NTR_GoNL$CHROM, dat_chr21_NTR_GoNL$POS, sep = ":")
+dat_chr21_NTR_GoNL$CHROM <- dat_chr21_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr21_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr21_NTR_GoNL),]
+colnames(dat_chr21_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr21_NTR_GoNL <- as.matrix(dat_chr21_NTR_GoNL)
+rownames(dat_chr21_NTR_GoNL) <- rowns_chr21_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr21_BIOS_dosages<-list(dat_chr21_CODAM,dat_chr21_LL,dat_chr21_LLS_660Q,dat_chr21_LLS_OmniExpr,dat_chr21_NTR_Affy6,dat_chr21_NTR_GoNL,dat_chr21_PAN,dat_chr21_RS)
+rowns <- Reduce(intersect,lapply(chr21_BIOS_dosages, FUN = rownames))
+chr21_BIOS_dosages <- lapply(chr21_BIOS_dosages, function(x) x[rowns,])
+chr21_BIOS_dosages<-do.call(cbind,chr21_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr21_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr21_BIOS_dosages<-chr21_BIOS_dosages[rownames(MAFs),]
+chr21_BIOS_dosages<-chr21_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr21_BIOS_dosages,file = "chr21_BIOS_dosages.RData")
+```
+
+```{r}
+# chr22
+# CODAM
+dat_chr22_CODAM <- read_tsv(file = "chr22.CODAM.DS.FORMAT", progress = FALSE)
+rowns_chr22_CODAM <- paste(dat_chr22_CODAM$CHROM,dat_chr22_CODAM$POS, sep = ":")
+dat_chr22_CODAM$CHROM <- dat_chr22_CODAM$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM<-mvalues_PCDH_hrcv1.1_col_CODAM[colnames(dat_chr22_CODAM),]
+colnames(dat_chr22_CODAM)<-mvalues_PCDH_hrcv1.1_col_CODAM$uuid
+dat_chr22_CODAM <- as.matrix(dat_chr22_CODAM)
+rownames(dat_chr22_CODAM) <- rowns_chr22_CODAM
+
+# LL
+dat_chr22_LL <- read_tsv(file = "chr22.LL.DS.FORMAT", progress = FALSE)
+rowns_chr22_LL <- paste(dat_chr22_LL$CHROM,dat_chr22_LL$POS, sep = ":")
+dat_chr22_LL$CHROM <- dat_chr22_LL$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL)<-mvalues_PCDH_hrcv1.1_col_LL$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL<-mvalues_PCDH_hrcv1.1_col_LL[colnames(dat_chr22_LL),]
+colnames(dat_chr22_LL)<-mvalues_PCDH_hrcv1.1_col_LL$uuid
+dat_chr22_LL <- as.matrix(dat_chr22_LL)
+rownames(dat_chr22_LL) <- rowns_chr22_LL
+
+# PAN
+dat_chr22_PAN <- read_tsv(file = "chr22.PAN.DS.FORMAT", progress = FALSE)
+rowns_chr22_PAN <- paste(dat_chr22_PAN$CHROM, dat_chr22_PAN$POS, sep = ":")
+dat_chr22_PAN$CHROM <- dat_chr22_PAN$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN<-mvalues_PCDH_hrcv1.1_col_PAN[colnames(dat_chr22_PAN),]
+colnames(dat_chr22_PAN)<-mvalues_PCDH_hrcv1.1_col_PAN$uuid
+dat_chr22_PAN <- as.matrix(dat_chr22_PAN)
+rownames(dat_chr22_PAN) <- rowns_chr22_PAN
+
+# LLS
+# 660Q array
+dat_chr22_LLS_660Q <- read_tsv(file = "chr22.LLS_660Q.DS.FORMAT", progress = FALSE)
+rowns_chr22_LLS_660Q <- paste(dat_chr22_LLS_660Q$CHROM, dat_chr22_LLS_660Q$POS, sep = ":")
+dat_chr22_LLS_660Q$CHROM <- dat_chr22_LLS_660Q$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS)<-mvalues_PCDH_hrcv1.1_col_LLS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q<-mvalues_PCDH_hrcv1.1_col_LLS_660Q[colnames(dat_chr22_LLS_660Q),]
+colnames(dat_chr22_LLS_660Q)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q$uuid
+dat_chr22_LLS_660Q <- as.matrix(dat_chr22_LLS_660Q)
+rownames(dat_chr22_LLS_660Q) <- rowns_chr22_LLS_660Q
+
+# OmniExpr array
+dat_chr22_LLS_OmniExpr <- read_tsv(file = "chr22.LLS_OmniExpr.DS.FORMAT", progress = FALSE)
+rowns_chr22_LLS_OmniExpr <- paste(dat_chr22_LLS_OmniExpr$CHROM, dat_chr22_LLS_OmniExpr$POS, sep = ":")
+dat_chr22_LLS_OmniExpr$CHROM <- dat_chr22_LLS_OmniExpr$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-filter(mvalues_PCDH_hrcv1.1_col_LLS,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr[colnames(dat_chr22_LLS_OmniExpr),]
+colnames(dat_chr22_LLS_OmniExpr)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr$uuid
+dat_chr22_LLS_OmniExpr <- as.matrix(dat_chr22_LLS_OmniExpr)
+rownames(dat_chr22_LLS_OmniExpr) <- rowns_chr22_LLS_OmniExpr
+
+# RS
+dat_chr22_RS <- read_tsv(file = "chr22.RS.DS.FORMAT", progress = FALSE)
+rowns_chr22_RS <- paste(dat_chr22_RS$CHROM, dat_chr22_RS$POS, sep = ":")
+dat_chr22_RS$CHROM <- dat_chr22_RS$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS)<-mvalues_PCDH_hrcv1.1_col_RS$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS<-mvalues_PCDH_hrcv1.1_col_RS[colnames(dat_chr22_RS),]
+colnames(dat_chr22_RS)<-mvalues_PCDH_hrcv1.1_col_RS$uuid
+dat_chr22_RS <- as.matrix(dat_chr22_RS)
+rownames(dat_chr22_RS) <- rowns_chr22_RS
+
+# NTR
+# Affy6 array
+dat_chr22_NTR_Affy6 <- read_tsv(file = "chr22.NTR_Affy6.DS.FORMAT", progress = FALSE)
+rowns_chr22_NTR_Affy6 <- paste(dat_chr22_NTR_Affy6$CHROM,dat_chr22_NTR_Affy6$POS, sep = ":")
+dat_chr22_NTR_Affy6$CHROM <- dat_chr22_NTR_Affy6$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR)<-mvalues_PCDH_hrcv1.1_col_NTR$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr22_NTR_Affy6))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6[colnames(dat_chr22_NTR_Affy6),]
+colnames(dat_chr22_NTR_Affy6)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6$uuid
+dat_chr22_NTR_Affy6 <- as.matrix(dat_chr22_NTR_Affy6)
+rownames(dat_chr22_NTR_Affy6) <- rowns_chr22_NTR_Affy6
+
+# GoNL array
+dat_chr22_NTR_GoNL <- read_tsv(file = "chr22.NTR_GoNL.DS.FORMAT", progress = FALSE)
+rowns_chr22_NTR_GoNL <- paste(dat_chr22_NTR_GoNL$CHROM, dat_chr22_NTR_GoNL$POS, sep = ":")
+dat_chr22_NTR_GoNL$CHROM <- dat_chr22_NTR_GoNL$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-filter(mvalues_PCDH_hrcv1.1_col_NTR,imputation_id_hrcv1.1%in%colnames(dat_chr22_NTR_GoNL))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL[colnames(dat_chr22_NTR_GoNL),]
+colnames(dat_chr22_NTR_GoNL)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL$uuid
+dat_chr22_NTR_GoNL <- as.matrix(dat_chr22_NTR_GoNL)
+rownames(dat_chr22_NTR_GoNL) <- rowns_chr22_NTR_GoNL
+
+# Merge datasets,select SNPs that present in every biobank.
+chr22_BIOS_dosages<-list(dat_chr22_CODAM,dat_chr22_LL,dat_chr22_LLS_660Q,dat_chr22_LLS_OmniExpr,dat_chr22_NTR_Affy6,dat_chr22_NTR_GoNL,dat_chr22_PAN,dat_chr22_RS)
+rowns <- Reduce(intersect,lapply(chr22_BIOS_dosages, FUN = rownames))
+chr22_BIOS_dosages <- lapply(chr22_BIOS_dosages, function(x) x[rowns,])
+chr22_BIOS_dosages<-do.call(cbind,chr22_BIOS_dosages)
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+MAFs <- rowMeans(chr22_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chr22_BIOS_dosages<-chr22_BIOS_dosages[rownames(MAFs),]
+chr22_BIOS_dosages<-chr22_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chr22_BIOS_dosages,file = "chr22_BIOS_dosages.RData")
+```
+
+```{r}
+# chrX 
+path <- "/exports/molepi/RSC_BIOS/RP3_data/HRCv1.1_Imputation/" 
+# For LLS and NTR the samples are measured on two different arrays
+biobanks <- c("LL", "PAN", "CODAM", "RS", "LLS_OmniExpr", "LLS_660Q", "NTR_GoNL", "NTR_Affy6") 
+BPPARAM <- MulticoreParam(workers = 16)
+
+# Females
+lst <- bplapply(biobanks, FUN = function(biobank){
+		path_biobank <- paste0(path, str_replace(biobank, "_", "/"), "/chrX",".no.auto_female.info.gz") 
+		info <- read_tsv(path_biobank, col_types = cols(SNP = "c"), progress = FALSE) # read_tsv is faster than base R read.table
+
+		# Remove duplicates (tri-allelic SNPs) and SNPs with Rsq < 0.3
+		info <- info[!(duplicated(info$SNP) | duplicated(info$SNP, fromLast = TRUE)) &info$Rsq > 0.3,]
+		snps <- info$SNP
+		snps			  
+	}, BPPARAM = BPPARAM)
+snps_intersect_female <- Reduce(intersect, lst)
+
+# Males
+lst <- bplapply(biobanks, FUN = function(biobank){
+		path_biobank <- paste0(path, str_replace(biobank, "_", "/"), "/chrX",".no.auto_male.info.gz") 
+		info <- read_tsv(path_biobank, col_types = cols(SNP = "c"), progress = FALSE) # read_tsv is faster than base R read.table
+
+		# Remove duplicates (tri-allelic SNPs) and SNPs with Rsq < 0.3
+		info <- info[!(duplicated(info$SNP) | duplicated(info$SNP, fromLast = TRUE)) &info$Rsq > 0.3,]
+		snps <- info$SNP
+		snps			  
+	}, BPPARAM = BPPARAM)
+snps_intersect_male <- Reduce(intersect, lst)
+snps_intersect_chrX<-intersect(snps_intersect_male,snps_intersect_female)
+write.table(snps_intersect_chrX, file = sprintf("/exports/molepi/RSC_BIOS/Users/yliu/Protocadherins_gene_cluster/BIOS_genotype/chrX_snps_R20.3_biallelic"),quote = FALSE, row.names = FALSE, col.names = FALSE)
+
+# Extract dosages from VCF-files using VCFtools
+path_geno<-"/exports/molepi/RSC_BIOS/Users/yliu/Protocadherins_gene_cluster/BIOS_genotype/"
+#### Females
+# CODAM
+biobanks<-"CODAM"
+chr<-"chrX"
+null_female <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_female.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_CODAM_female.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.female", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+
+null_male <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_male.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_CODAM_male.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.male", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+
+biobanks<-"LL"
+null_female <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_female.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_LL_female.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.female", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+
+null_male <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_male.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_LL_male.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.male", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+
+biobanks<-c("LLS_660Q","LLS_OmniExpr")
+null_female <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_female.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_LLS_female.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.female", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+
+null_male <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_male.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_LLS_male.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.male", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+
+biobanks<-c("NTR_Affy6","NTR_GoNL")
+null_female <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_female.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_NTR_female.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.female", path_biobank, chr, path_geno, biobank), "\n", ""))
+	},BPPARAM = BPPARAM)
+
+null_male <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_male.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_NTR_male.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.male", path_biobank, chr, path_geno, biobank), "\n", ""))
+	},BPPARAM = BPPARAM)
+
+biobanks<-"PAN"
+null_female <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_female.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_PAN_female.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.female", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+
+null_male <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_male.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_PAN_male.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.male", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+
+biobanks<-"RS"
+null_female <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_female.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_RS_female.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.female", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+
+null_male <- bplapply(biobanks, FUN = function(biobank) {
+		path_biobank <- paste(path, str_replace(biobank, "_", "/"),"/",sep = "")
+    system(command = str_replace(sprintf("vcftools --gzvcf %1$s%2$s.no.auto_male.dose.vcf.gz --keep %3$smvalues_PCDH_hrcv1.1_ids_RS_male.txt --snps %3$s%2$s_snps_R20.3_biallelic --hwe 0.0001 --extract-FORMAT-info DS --out %3$s%2$s.%4$s.male", path_biobank, chr, path_geno, biobank), "\n", ""))
+	}, BPPARAM = BPPARAM)
+```
+
+```{r}
+### Females
+# CODAM
+dat_chrX_CODAM_female <- read_tsv(file = "chrX.CODAM.female.DS.FORMAT", progress = FALSE)
+rowns_chrX_CODAM_female <- paste(dat_chrX_CODAM_female$CHROM,dat_chrX_CODAM_female$POS, sep = ":")
+dat_chrX_CODAM_female$CHROM <- dat_chrX_CODAM_female$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM_female)<-mvalues_PCDH_hrcv1.1_col_CODAM_female$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM_female<-mvalues_PCDH_hrcv1.1_col_CODAM_female[colnames(dat_chrX_CODAM_female),]
+colnames(dat_chrX_CODAM_female)<-mvalues_PCDH_hrcv1.1_col_CODAM_female$uuid
+dat_chrX_CODAM_female <- as.matrix(dat_chrX_CODAM_female)
+rownames(dat_chrX_CODAM_female) <- rowns_chrX_CODAM_female
+
+# LL
+dat_chrX_LL_female <- read_tsv(file = "chrX.LL.female.DS.FORMAT", progress = FALSE)
+rowns_chrX_LL_female <- paste(dat_chrX_LL_female$CHROM,dat_chrX_LL_female$POS, sep = ":")
+dat_chrX_LL_female$CHROM <- dat_chrX_LL_female$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL_female)<-mvalues_PCDH_hrcv1.1_col_LL_female$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL_female<-mvalues_PCDH_hrcv1.1_col_LL_female[colnames(dat_chrX_LL_female),]
+colnames(dat_chrX_LL_female)<-mvalues_PCDH_hrcv1.1_col_LL_female$uuid
+dat_chrX_LL_female <- as.matrix(dat_chrX_LL_female)
+rownames(dat_chrX_LL_female) <- rowns_chrX_LL_female
+
+# PAN
+dat_chrX_PAN_female <- read_tsv(file = "chrX.PAN.female.DS.FORMAT", progress = FALSE)
+rowns_chrX_PAN_female <- paste(dat_chrX_PAN_female$CHROM,dat_chrX_PAN_female$POS, sep = ":")
+dat_chrX_PAN_female$CHROM <- dat_chrX_PAN_female$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN_female)<-mvalues_PCDH_hrcv1.1_col_PAN_female$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN_female<-mvalues_PCDH_hrcv1.1_col_PAN_female[colnames(dat_chrX_PAN_female),]
+colnames(dat_chrX_PAN_female)<-mvalues_PCDH_hrcv1.1_col_PAN_female$uuid
+dat_chrX_PAN_female <- as.matrix(dat_chrX_PAN_female)
+rownames(dat_chrX_PAN_female) <- rowns_chrX_PAN_female
+
+# LLS
+# 660Q array
+dat_chrX_LLS_660Q_female <- read_tsv(file = "chrX.LLS_660Q.female.DS.FORMAT", progress = FALSE)
+rowns_chrX_LLS_660Q_female <- paste(dat_chrX_LLS_660Q_female$CHROM, dat_chrX_LLS_660Q_female$POS, sep = ":")
+dat_chrX_LLS_660Q_female$CHROM <- dat_chrX_LLS_660Q_female$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS_female)<-mvalues_PCDH_hrcv1.1_col_LLS_female$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q_female<-filter(mvalues_PCDH_hrcv1.1_col_LLS_female,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q_female<-mvalues_PCDH_hrcv1.1_col_LLS_660Q_female[colnames(dat_chrX_LLS_660Q_female),]
+colnames(dat_chrX_LLS_660Q_female)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q_female$uuid
+dat_chrX_LLS_660Q_female <- as.matrix(dat_chrX_LLS_660Q_female)
+rownames(dat_chrX_LLS_660Q_female) <- rowns_chrX_LLS_660Q_female
+
+# OmniExpr array
+dat_chrX_LLS_OmniExpr_female <- read_tsv(file = "chrX.LLS_OmniExpr.female.DS.FORMAT", progress = FALSE)
+rowns_chrX_LLS_OmniExpr_female <- paste(dat_chrX_LLS_OmniExpr_female$CHROM, dat_chrX_LLS_OmniExpr_female$POS, sep = ":")
+dat_chrX_LLS_OmniExpr_female$CHROM <- dat_chrX_LLS_OmniExpr_female$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr_female<-filter(mvalues_PCDH_hrcv1.1_col_LLS_female,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr_female<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr_female[colnames(dat_chrX_LLS_OmniExpr_female),]
+colnames(dat_chrX_LLS_OmniExpr_female)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr_female$uuid
+dat_chrX_LLS_OmniExpr_female <- as.matrix(dat_chrX_LLS_OmniExpr_female)
+rownames(dat_chrX_LLS_OmniExpr_female) <- rowns_chrX_LLS_OmniExpr_female
+
+# RS
+dat_chrX_RS_female <- read_tsv(file = "chrX.RS.female.DS.FORMAT", progress = FALSE)
+rowns_chrX_RS_female <- paste(dat_chrX_RS_female$CHROM,dat_chrX_RS_female$POS, sep = ":")
+dat_chrX_RS_female$CHROM <- dat_chrX_RS_female$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS_female)<-mvalues_PCDH_hrcv1.1_col_RS_female$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS_female<-mvalues_PCDH_hrcv1.1_col_RS_female[colnames(dat_chrX_RS_female),]
+colnames(dat_chrX_RS_female)<-mvalues_PCDH_hrcv1.1_col_RS_female$uuid
+dat_chrX_RS_female <- as.matrix(dat_chrX_RS_female)
+rownames(dat_chrX_RS_female) <- rowns_chrX_RS_female
+
+# NTR
+# Affy6 array
+dat_chrX_NTR_Affy6_female <- read_tsv(file = "chrX.NTR_Affy6.female.DS.FORMAT", progress = FALSE)
+rowns_chrX_NTR_Affy6_female <- paste(dat_chrX_NTR_Affy6_female$CHROM,dat_chrX_NTR_Affy6_female$POS, sep = ":")
+dat_chrX_NTR_Affy6_female$CHROM <- dat_chrX_NTR_Affy6_female$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR_female)<-mvalues_PCDH_hrcv1.1_col_NTR_female$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6_female<-filter(mvalues_PCDH_hrcv1.1_col_NTR_female,imputation_id_hrcv1.1%in%colnames(dat_chrX_NTR_Affy6_female))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6_female<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6_female[colnames(dat_chrX_NTR_Affy6_female),]
+colnames(dat_chrX_NTR_Affy6_female)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6_female$uuid
+dat_chrX_NTR_Affy6_female <- as.matrix(dat_chrX_NTR_Affy6_female)
+rownames(dat_chrX_NTR_Affy6_female) <- rowns_chrX_NTR_Affy6_female
+
+# GoNL array
+dat_chrX_NTR_GoNL_female <- read_tsv(file = "chrX.NTR_GoNL.female.DS.FORMAT", progress = FALSE)
+rowns_chrX_NTR_GoNL_female <- paste(dat_chrX_NTR_GoNL_female$CHROM, dat_chrX_NTR_GoNL_female$POS, sep = ":")
+dat_chrX_NTR_GoNL_female$CHROM <- dat_chrX_NTR_GoNL_female$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL_female<-filter(mvalues_PCDH_hrcv1.1_col_NTR_female,imputation_id_hrcv1.1%in%colnames(dat_chrX_NTR_GoNL_female))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL_female<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL_female[colnames(dat_chrX_NTR_GoNL_female),]
+colnames(dat_chrX_NTR_GoNL_female)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL_female$uuid
+dat_chrX_NTR_GoNL_female <- as.matrix(dat_chrX_NTR_GoNL_female)
+rownames(dat_chrX_NTR_GoNL_female) <- rowns_chrX_NTR_GoNL_female
+
+# Merge datasets,select SNPs that present in every biobank.
+chrX_BIOS_dosages_female<-list(dat_chrX_CODAM_female,dat_chrX_LL_female,dat_chrX_LLS_660Q_female,dat_chrX_LLS_OmniExpr_female,dat_chrX_NTR_Affy6_female,dat_chrX_NTR_GoNL_female,dat_chrX_PAN_female,dat_chrX_RS_female)
+rowns <- Reduce(intersect,lapply(chrX_BIOS_dosages_female, FUN = rownames))
+chrX_BIOS_dosages_female <- lapply(chrX_BIOS_dosages_female, function(x) x[rowns,])
+chrX_BIOS_dosages_female<-do.call(cbind,chrX_BIOS_dosages_female)
+```
+
+```{r}
+### Males
+# CODAM
+dat_chrX_CODAM_male <- read_tsv(file = "chrX.CODAM.male.DS.FORMAT", progress = FALSE)
+rowns_chrX_CODAM_male <- paste(dat_chrX_CODAM_male$CHROM,dat_chrX_CODAM_male$POS, sep = ":")
+dat_chrX_CODAM_male$CHROM <- dat_chrX_CODAM_male$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_CODAM_male)<-mvalues_PCDH_hrcv1.1_col_CODAM_male$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_CODAM_male<-mvalues_PCDH_hrcv1.1_col_CODAM_male[colnames(dat_chrX_CODAM_male),]
+colnames(dat_chrX_CODAM_male)<-mvalues_PCDH_hrcv1.1_col_CODAM_male$uuid
+dat_chrX_CODAM_male <- as.matrix(dat_chrX_CODAM_male)
+rownames(dat_chrX_CODAM_male) <- rowns_chrX_CODAM_male
+
+# LL
+dat_chrX_LL_male <- read_tsv(file = "chrX.LL.male.DS.FORMAT", progress = FALSE)
+rowns_chrX_LL_male <- paste(dat_chrX_LL_male$CHROM,dat_chrX_LL_male$POS, sep = ":")
+dat_chrX_LL_male$CHROM <- dat_chrX_LL_male$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LL_male)<-mvalues_PCDH_hrcv1.1_col_LL_male$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LL_male<-mvalues_PCDH_hrcv1.1_col_LL_male[colnames(dat_chrX_LL_male),]
+colnames(dat_chrX_LL_male)<-mvalues_PCDH_hrcv1.1_col_LL_male$uuid
+dat_chrX_LL_male <- as.matrix(dat_chrX_LL_male)
+rownames(dat_chrX_LL_male) <- rowns_chrX_LL_male
+
+# PAN
+dat_chrX_PAN_male <- read_tsv(file = "chrX.PAN.male.DS.FORMAT", progress = FALSE)
+rowns_chrX_PAN_male <- paste(dat_chrX_PAN_male$CHROM,dat_chrX_PAN_male$POS, sep = ":")
+dat_chrX_PAN_male$CHROM <- dat_chrX_PAN_male$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_PAN_male)<-mvalues_PCDH_hrcv1.1_col_PAN_male$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_PAN_male<-mvalues_PCDH_hrcv1.1_col_PAN_male[colnames(dat_chrX_PAN_male),]
+colnames(dat_chrX_PAN_male)<-mvalues_PCDH_hrcv1.1_col_PAN_male$uuid
+dat_chrX_PAN_male <- as.matrix(dat_chrX_PAN_male)
+rownames(dat_chrX_PAN_male) <- rowns_chrX_PAN_male
+
+# LLS
+# 660Q array
+dat_chrX_LLS_660Q_male <- read_tsv(file = "chrX.LLS_660Q.male.DS.FORMAT", progress = FALSE)
+rowns_chrX_LLS_660Q_male <- paste(dat_chrX_LLS_660Q_male$CHROM, dat_chrX_LLS_660Q_male$POS, sep = ":")
+dat_chrX_LLS_660Q_male$CHROM <- dat_chrX_LLS_660Q_male$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_LLS_male)<-mvalues_PCDH_hrcv1.1_col_LLS_male$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_LLS_660Q_male<-filter(mvalues_PCDH_hrcv1.1_col_LLS_male,gwas_chip=="Illumina Human660-Quad")
+mvalues_PCDH_hrcv1.1_col_LLS_660Q_male<-mvalues_PCDH_hrcv1.1_col_LLS_660Q_male[colnames(dat_chrX_LLS_660Q_male),]
+colnames(dat_chrX_LLS_660Q_male)<-mvalues_PCDH_hrcv1.1_col_LLS_660Q_male$uuid
+dat_chrX_LLS_660Q_male <- as.matrix(dat_chrX_LLS_660Q_male)
+rownames(dat_chrX_LLS_660Q_male) <- rowns_chrX_LLS_660Q_male
+
+# OmniExpr array
+dat_chrX_LLS_OmniExpr_male <- read_tsv(file = "chrX.LLS_OmniExpr.male.DS.FORMAT", progress = FALSE)
+rowns_chrX_LLS_OmniExpr_male <- paste(dat_chrX_LLS_OmniExpr_male$CHROM, dat_chrX_LLS_OmniExpr_male$POS, sep = ":")
+dat_chrX_LLS_OmniExpr_male$CHROM <- dat_chrX_LLS_OmniExpr_male$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr_male<-filter(mvalues_PCDH_hrcv1.1_col_LLS_male,gwas_chip=="Illumina OmniExpress")
+mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr_male<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr_male[colnames(dat_chrX_LLS_OmniExpr_male),]
+colnames(dat_chrX_LLS_OmniExpr_male)<-mvalues_PCDH_hrcv1.1_col_LLS_OmniExpr_male$uuid
+dat_chrX_LLS_OmniExpr_male <- as.matrix(dat_chrX_LLS_OmniExpr_male)
+rownames(dat_chrX_LLS_OmniExpr_male) <- rowns_chrX_LLS_OmniExpr_male
+
+# RS
+dat_chrX_RS_male <- read_tsv(file = "chrX.RS.male.DS.FORMAT", progress = FALSE)
+rowns_chrX_RS_male <- paste(dat_chrX_RS_male$CHROM,dat_chrX_RS_male$POS, sep = ":")
+dat_chrX_RS_male$CHROM <- dat_chrX_RS_male$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_RS_male)<-mvalues_PCDH_hrcv1.1_col_RS_male$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_RS_male<-mvalues_PCDH_hrcv1.1_col_RS_male[colnames(dat_chrX_RS_male),]
+colnames(dat_chrX_RS_male)<-mvalues_PCDH_hrcv1.1_col_RS_male$uuid
+dat_chrX_RS_male <- as.matrix(dat_chrX_RS_male)
+rownames(dat_chrX_RS_male) <- rowns_chrX_RS_male
+
+# NTR
+# Affy6 array
+dat_chrX_NTR_Affy6_male <- read_tsv(file = "chrX.NTR_Affy6.male.DS.FORMAT", progress = FALSE)
+rowns_chrX_NTR_Affy6_male <- paste(dat_chrX_NTR_Affy6_male$CHROM,dat_chrX_NTR_Affy6_male$POS, sep = ":")
+dat_chrX_NTR_Affy6_male$CHROM <- dat_chrX_NTR_Affy6_male$POS <- NULL
+rownames(mvalues_PCDH_hrcv1.1_col_NTR_male)<-mvalues_PCDH_hrcv1.1_col_NTR_male$imputation_id_hrcv1.1
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6_male<-filter(mvalues_PCDH_hrcv1.1_col_NTR_male,imputation_id_hrcv1.1%in%colnames(dat_chrX_NTR_Affy6_male))
+mvalues_PCDH_hrcv1.1_col_NTR_Affy6_male<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6_male[colnames(dat_chrX_NTR_Affy6_male),]
+colnames(dat_chrX_NTR_Affy6_male)<-mvalues_PCDH_hrcv1.1_col_NTR_Affy6_male$uuid
+dat_chrX_NTR_Affy6_male <- as.matrix(dat_chrX_NTR_Affy6_male)
+rownames(dat_chrX_NTR_Affy6_male) <- rowns_chrX_NTR_Affy6_male
+
+# GoNL array
+dat_chrX_NTR_GoNL_male <- read_tsv(file = "chrX.NTR_GoNL.male.DS.FORMAT", progress = FALSE)
+rowns_chrX_NTR_GoNL_male <- paste(dat_chrX_NTR_GoNL_male$CHROM, dat_chrX_NTR_GoNL_male$POS, sep = ":")
+dat_chrX_NTR_GoNL_male$CHROM <- dat_chrX_NTR_GoNL_male$POS <- NULL
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL_male<-filter(mvalues_PCDH_hrcv1.1_col_NTR_male,imputation_id_hrcv1.1%in%colnames(dat_chrX_NTR_GoNL_male))
+mvalues_PCDH_hrcv1.1_col_NTR_GoNL_male<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL_male[colnames(dat_chrX_NTR_GoNL_male),]
+colnames(dat_chrX_NTR_GoNL_male)<-mvalues_PCDH_hrcv1.1_col_NTR_GoNL_male$uuid
+dat_chrX_NTR_GoNL_male <- as.matrix(dat_chrX_NTR_GoNL_male)
+rownames(dat_chrX_NTR_GoNL_male) <- rowns_chrX_NTR_GoNL_male
+
+# Merge datasets,select SNPs that present in every biobank.
+chrX_BIOS_dosages_male<-list(dat_chrX_CODAM_male,dat_chrX_LL_male,dat_chrX_LLS_660Q_male,dat_chrX_LLS_OmniExpr_male,dat_chrX_NTR_Affy6_male,dat_chrX_NTR_GoNL_male,dat_chrX_PAN_male,dat_chrX_RS_male)
+rowns <- Reduce(intersect,lapply(chrX_BIOS_dosages_male, FUN = rownames))
+chrX_BIOS_dosages_male <- lapply(chrX_BIOS_dosages_male, function(x) x[rowns,])
+chrX_BIOS_dosages_male<-do.call(cbind,chrX_BIOS_dosages_male)
+
+id<-intersect(rownames(chrX_BIOS_dosages_male),rownames(chrX_BIOS_dosages_female))
+chrX_BIOS_dosages_male<-chrX_BIOS_dosages_male[id,]
+save(chrX_BIOS_dosages_male,chrX_BIOS_dosages_female,file = "chrX_BIOS_dosages_male_female.RData")
+
+# Calculate MAFs and filtering SNPs that MAF less than 0.01 
+chrX_BIOS_dosages_male<-chrX_BIOS_dosages_male*2
+chrX_BIOS_dosages<-cbind(chrX_BIOS_dosages_male,chrX_BIOS_dosages_female)
+
+MAFs <- rowMeans(chrX_BIOS_dosages) / 2
+MAFs <- ifelse(MAFs > 0.5, 1 - MAFs, MAFs)
+MAFs <-as.data.frame(MAFs)
+MAFs<-filter(MAFs,MAFs>0.01)
+chrX_BIOS_dosages<-chrX_BIOS_dosages[rownames(MAFs),]
+chrX_BIOS_dosages<-chrX_BIOS_dosages[,colnames(mvalues_PCDH_hrcv1.1)]
+save(chrX_BIOS_dosages,file = "chrX_BIOS_dosages.RData")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

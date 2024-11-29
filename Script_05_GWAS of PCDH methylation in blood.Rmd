@@ -1,0 +1,185 @@
+---
+title: "Script_05_GWAS of PCDH methylation in blood"
+author: "Yunfeng"
+date: '2024-01-17'
+output: html_document
+---
+
+```{r}
+#set library path.
+.libPaths("/exports/molepi/RSC_BIOS/Users/yliu/Rlibs")
+```
+
+```{r}
+# load libraries
+library(SummarizedExperiment)
+library(BiocParallel)
+library(data.table)
+library(plyr)
+library(tidyverse)
+library(cate)
+```
+
+
+```{r}
+# Prepare methylation data
+# rank-inverse normal(RIN) transformation for PCDH methylation data.
+RIN <- function(x) {
+  y <- rank(x, NA)
+  y <- ppoints(y)[y]
+  y <- qnorm(y)
+  x[!is.na(x)] <- y
+  x
+ }
+
+RIN.mvalues_PCDH <- t(apply(assay(mvalues_PCDH_hrcv1.1), 1, RIN)) 
+
+# Prepare covariate data
+cvrt<-as.data.frame(colData(mvalues_PCDH_hrcv1.1))[c("***","***",...."***"]
+
+## Change some covariates into factor if necessary
+cvrt$biobank_id<-factor(cvrt$biobank_id)
+cvrt$sentrix_position<-factor(cvrt$sentrix_position)
+cvrt$sample_plate<-factor(cvrt$sample_plate)
+
+# Run linear model
+library(MatrixEQTL)
+cvrt<-t(model.matrix(~.,data=cvrt)[,-1])
+cvrt = SlicedData$new(cvrt)
+M = SlicedData$new(RIN.mvalues_PCDH)
+```
+
+
+```{r}
+### Test effect of SNPs across whole genome (include chrX) on PCDH methylation,the output will contain multiple spilts matrix for each chromosome
+# define output file
+data_path="/../.."
+out_path="/../.."
+chr=1:23
+MaxSNPs = 45000 # max number of SNPs to test
+
+run <- function (chr) {
+    # load dosages data  
+    load(sprintf('%schr%s_BIOS_dosages.RData',data_path,chr))
+   
+    # split analysis up
+    nsplits = round_any(nrow(dosages)/MaxSNPs, 1, ceiling)
+    splits = rep(1:nsplits, length = nrow(dosages))
+
+    for (i in 1:nsplits) {
+        indx = splits == i
+        geno = SlicedData$new(dosages[indx,])
+        
+        # define output file
+        outfile = sprintf('%schr%s_split%s_of_%s.txt',out_path,chr,i,nsplits)
+        # run models
+        empty = Matrix_eQTL_engine(
+            snps = geno,
+            gene = M,
+            cvrt = cvrt,
+            output_file_name = outfile,
+            pvOutputThreshold = 1,
+            useModel = modelLINEAR,
+            errorCovariance = numeric(),
+            verbose = TRUE,
+            pvalue.hist = FALSE,
+            min.pv.by.genesnp = FALSE,
+            noFDRsaveMemory = TRUE
+        )
+
+    }
+}   
+
+BPPARAM = MulticoreParam(16)
+empty = bplapply(chr, FUN=run, BPPARAM=BPPARAM)
+
+# Doing multiple testing correction for 607 Pvalues per SNP
+# Apply simes procedure to each split of all chromosomes to obatin SimesPvalue per SNP
+# Starting from chr1
+simes = function (q,n) {
+    q = sort(q)
+    S = n /(1:length(q))  
+    min(min(q*S), 1)  
+}
+
+out_split*_of_*<-fread(file ="chr1_split*_of_*.txt",header=TRUE,sep='\t')
+SimesPValue_split*_of_*<-tapply(out_split*_of_*$`p-value`,out_split*_of_*$SNP,simes,n=607)
+SimesPValue_split*_of_*<-as.data.frame(SimesPValue_split*_of_*)
+SimesPValue_split*_of_*$Position<-as.numeric(gsub("^.*[:]", "", rownames(SimesPValue_split*_of_*)))
+SimesPValue_split*_of_*$Symbol<-ifelse(SimesPValue_split*_of_*$SimesPValue<5e-8,"Significant","NS")
+
+# Combined all splits of chr1 SimesPvalue into together
+SimesPValue_chr1<-rbind(SimesPValue_split*_of_*,SimesPValue_split*_of_*,...,SimesPValue_split*_of_*)
+...
+...
+...
+SimesPValue_chr22<-rbind(SimesPValue_split*_of_*,SimesPValue_split*_of_*,...,SimesPValue_split*_of_*)
+SimesPValue_chrX<-rbind(SimesPValue_split*_of_*,SimesPValue_split*_of_*,...,SimesPValue_split*_of_*)
+
+SimesPValue_chr1_22_X<-rbind(SimesPValue_chr1,SimesPValue_chr2,SimesPValue_chr3,SimesPValue_chr4,SimesPValue_chr5,SimesPValue_chr6,SimesPValue_chr7,SimesPValue_chr8,SimesPValue_chr9,SimesPValue_chr10,SimesPValue_chr11,SimesPValue_chr12,SimesPValue_chr13,SimesPValue_chr14,SimesPValue_chr15,SimesPValue_chr16,SimesPValue_chr17,SimesPValue_chr18,SimesPValue_chr19,SimesPValue_chr20,SimesPValue_chr21,SimesPValue_chr22,SimesPValue_chrX)
+save(SimesPValue_chr1_22_X,file = "SimesPValue_chr1_22_X.RData")
+```
+
+```{r}
+# Remove cis effects (5MB up- and down- stream)
+SimesPValue_chr1_22_X$Chr<-gsub("[:].*$","",rownames(SimesPValue_chr1_22_X))
+SimesPValue_chr1_22_X$Chr<-gsub("X","23",SimesPValue_chr1_22_X$Chr)
+SimesPValue_chr1_22_X$Chr<-as.numeric(SimesPValue_chr1_22_X$Chr)
+SimesPValue_chr1_22_X<-SimesPValue_chr1_22_X[,c(4,2,1,3)]
+gr_PCDH_cis<-GRanges(seqnames="chr5",ranges=IRanges(start = 135165721, end =   145892546))
+gr_chr5<-GRanges(seqnames="chr5",ranges=IRanges(start = SimesPValue_chr5$Position, end = SimesPValue_chr5$Position))
+gr_PCDH_snps<-subsetByOverlaps(gr_chr5, gr_PCDH_cis)
+gr_PCDH_snps<-as.data.frame(gr_PCDH_snps)
+gr_PCDH_snps$symbol<-paste("5:",gr_PCDH_snps$start,sep = "")
+SimesPValue_chr1_22_X<-subset(SimesPValue_chr1_22_X,!rownames(SimesPValue_chr1_22_X)%in%gr_PCDH_snps$symbol)
+SimesPValue_chr1_22_X$SNP<-rownames(SimesPValue_chr1_22_X)
+```
+
+
+```{r}
+SimesPValue_chr1_22_X$Col<-"gray"
+SimesPValue_chr1_22_X$Col[SimesPValue_chr1_22_X$Chr %in% seq(2, 22, by=2)]<- "black"
+SimesPValue_chr1_22_X$Col[SimesPValue_chr1_22_X$SimesPValue < 5e-8] <- "red"
+SimesPValue_chr1_22_X$Col[SimesPValue_chr1_22_X$SimesPValue<1e-5&SimesPValue_chr1_22_X$SimesPValue>=5e-8] <- "DeepSkyBlue1" 
+
+# Calculate cumulative position of each SNP
+SimesPValue_chr1_22_X<-SimesPValue_chr1_22_X%>%group_by(Chr)%>%summarise(chr_len=max(Position))%>% mutate(tot=cumsum(chr_len)-chr_len)%>%select(-chr_len)%>%left_join(SimesPValue_chr1_22_X,.,by=c("Chr"="Chr"))%>%arrange(Chr,Position) %>%mutate(BPcum=Position+tot)
+axisdf = SimesPValue_chr1_22_X %>% group_by(Chr) %>% summarize(center=( max(BPcum) + min(BPcum) ) / 2 )
+
+# Gene label
+SimesPValue_chr1_22_X$gene<-"none"
+SimesPValue_chr1_22_X$gene[SimesPValue_chr1_22_X$SNP == "18:2714889"] <- "italic('SMCHD1')"
+SimesPValue_chr1_22_X$gene[SimesPValue_chr1_22_X$SNP == "2:174235962"] <- "italic('CDCA7')" 
+SimesPValue_chr1_22_X$gene[SimesPValue_chr1_22_X$SNP == "8:117810524"] <- "italic('RAD21')"
+SimesPValue_chr1_22_X$gene[SimesPValue_chr1_22_X$SNP == "16:67617186"] <- "italic('CTCF')"
+SimesPValue_chr1_22_X$gene[SimesPValue_chr1_22_X$SNP == "19:15594913"] <- "italic('WIZ')"
+SimesPValue_chr1_22_X$gene[SimesPValue_chr1_22_X$SNP == "20:31446742"] <- "italic('DNMT3B')" 
+
+library(ggrepel)
+
+tiff("Output_05_Manhattan_PCDH_meQTL.tiff", units="in", width=14, height=6, res=600,compression = 'lzw')
+    ggplot(SimesPValue_chr1_22_X) +
+    aes(x=BPcum,y=sqrt(-log10(SimesPValue)),color=Col) +
+    geom_point(size=0.8) +
+    scale_color_manual(values=c("gray"="#c6c6c6","black"="#2c2c2e","DeepSkyBlue1"="#56B4E9","red"="#F08080")) +
+    scale_x_continuous(breaks = axisdf$center,label = axisdf$Chr,expand = c(0.025,0.025)) +
+    scale_y_continuous(breaks = sqrt(c(5, 10, 20, 30, 40, 50, 60)),
+    label = c(5, 10, 20, 30, 40, 50, 60),
+    expand = c(0.035,0.035)) +  
+    geom_text_repel(data=subset(SimesPValue_chr1_22_X,!gene=="none"),aes(label=gene),parse = TRUE,size=6,col = "black",min.segment.length = 0,nudge_x = 0.4,nudge_y = 1) +
+    theme_bw() +
+    theme( 
+      legend.position = 'none',
+      panel.grid.major.x = element_blank(),
+      panel.grid.minor.x = element_blank(),
+      panel.grid.minor.y = element_blank(),
+      panel.border = element_rect(linewidth = 1),
+      axis.title.x = element_text(size = 20),
+      axis.title.y = element_text(size = 20),
+      axis.text.x = element_text(size = 20,angle = 45,hjust = 1),
+      axis.text.y = element_text(size = 20)
+    )+ 
+   xlab("Chromosome") +
+   ylab(expression(-log[10]~(italic(P))))
+dev.off() 
+```

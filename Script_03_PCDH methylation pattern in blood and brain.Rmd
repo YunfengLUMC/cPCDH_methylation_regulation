@@ -1,0 +1,209 @@
+---
+title: "Script_03_PCDH methylation pattern in blood and brain"
+author: "Yunfeng"
+date: "2024-5-31"
+output: html_document
+---
+
+```{r}
+#set library path.
+.libPaths("/exports/molepi/RSC_BIOS/Users/yliu/Rlibs")
+```
+
+
+```{r}
+# Load necessary packages
+library(minfi)
+library(Gviz)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(Homo.sapiens)
+library(data.table)
+```
+
+
+```{r}
+# Load data
+load(file = "Output_01_methData_BIOS_PCDH.RData")
+load(file = "Output_01_methData_BIOS_chr5.RData")
+load(file = "Output_01_dat_mean_BDR_PCDH.RData")
+load(file = "Output_01_dat_mean_BDR_chr5.RData")
+load(file = "Output_01_ann450k_PCDH_BIOS.RData")
+load(file = "Output_02_mvalues_PCDH_hrcv1.1.RData")
+```
+
+
+```{r}
+# Mean methylation data based on 3777 samples
+betas_PCDH_hrcv1.1<-betas_PCDH[,colnames(mvalues_PCDH_hrcv1.1)]
+dat_mean_BIOS_PCDH<-as.data.frame(rowMeans(assay(betas_PCDH_hrcv1.1),na.rm = TRUE))
+colnames(dat_mean_BIOS_PCDH)<-"Mean.methylation"
+ann450K_PCDH<-as.data.frame(ann450K_PCDH)
+dat_mean_BIOS_PCDH$Position<-ann450K_PCDH$start
+dat_mean_BIOS_PCDH$Symbol<-c(rep("PCDHA",146),rep("PCDHB",202),rep("PCDHG",259))
+dat_mean_BIOS_PCDH<-dat_mean_BIOS_PCDH[,c(2,1,3)]
+save(dat_mean_BIOS_PCDH,file = "Output_03_dat_mean_BIOS_PCDH.RData")
+
+# Density plot of PCDH methylation in blood and brain.
+# BIOS blood
+betas_BIOS_chr5_hrcv1.1<-betas_BIOS_chr5[,colnames(mvalues_PCDH_hrcv1.1)]
+dat_mean_BIOS_chr5<-as.data.frame(rowMeans(assay(betas_BIOS_chr5_hrcv1.1),na.rm = TRUE))
+colnames(dat_mean_BIOS_chr5)<-"Mean.methylation"
+dat_mean_BIOS_PCDH<-dat_mean_BIOS_PCDH[,2,drop=FALSE]
+
+# BDR brain
+dat_mean_BDR_chr5<-dat_mean_BDR_chr5[,2,drop=FALSE]
+rownames(dat_mean_BDR_PCDH)<-dat_mean_BDR_PCDH$CpG
+dat_mean_BDR_PCDH<-dat_mean_BDR_PCDH[,7,drop=FALSE]
+save(dat_mean_BIOS_chr5,dat_mean_BIOS_PCDH,dat_mean_BDR_chr5,dat_mean_BDR_PCDH,file = "PCDH_densityPlot_blood_brain.RData")
+
+dat_mean_BIOS_chr5$symbol<-"Chr5_blood"
+dat_mean_BIOS_PCDH$symbol<-"PCDH_blood"
+dat_mean_BDR_chr5$symbol<-"Chr5_brain"
+dat_mean_BDR_PCDH$symbol<-"PCDH_brain"
+dat_mean_chr5_PCDH_BIOS_BDR<-rbind(dat_mean_BIOS_chr5,dat_mean_BIOS_PCDH,dat_mean_BDR_chr5,dat_mean_BDR_PCDH)
+dat_mean_chr5_PCDH_BIOS_BDR$symbol<-factor(dat_mean_chr5_PCDH_BIOS_BDR$symbol,levels = c("Chr5_blood","PCDH_blood","Chr5_brain","PCDH_brain"))
+save(dat_mean_chr5_PCDH_BIOS_BDR,file = "dat_mean_chr5_PCDH_BIOS_BDR.RData")
+
+pdf("Output_03_PCDH_densityPlot_blood_brain_v2.pdf",width = 9,height = 6)
+ggplot(dat_mean_chr5_PCDH_BIOS_BDR,aes(x=Mean.methylation,color=symbol,size = symbol)) +
+  geom_density()+
+  scale_x_continuous(breaks=c(0.0, 0.2, 0.4, 0.6, 0.8, 1.0))+
+  scale_y_continuous(breaks=c(0.0, 0.5, 1.0, 1.5, 2.0, 2.5))+
+  scale_color_manual(labels = c("Chr5 probes in blood", "cPCDH probes in blood","Chr5 probes in brain","cPCDH probes in brain"),values=c("#F08080","#F08080","#56B4E9","#56B4E9"))+
+  scale_size_manual(values = c(0.5,2,0.5,2)) +
+  theme_bw()+
+  theme(panel.grid.major.x = element_blank(),panel.grid.major.y = element_blank(),panel.grid.minor.x = element_blank(),panel.grid.minor.y = element_blank(),legend.position = "none",axis.title.x = element_text(size = 25),axis.title.y = element_text(size = 25),axis.text.x = element_text(size = 25),axis.text.y = element_text(size = 25))+ 
+   labs(x="Beta values",y="Density") 
+    dev.off()
+```
+
+```{r}
+# Promoters annotation (1500 upstream to 500 downstream of TSS)
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+PCDH_isoforms<-GRanges(seqnames="chr5",ranges=IRanges(start = 140165721, end = 140892546))
+PCDH_isoforms_txdb<-subsetByOverlaps(genes(txdb),PCDH_isoforms)
+PCDH_isoforms_symbol<-select(org.Hs.eg.db,PCDH_isoforms_txdb$gene_id,"SYMBOL")
+PCDH_isoforms_txdb$symbol<-PCDH_isoforms_symbol$SYMBOL
+PCDH_isoforms_txdb<-PCDH_isoforms_txdb[order(ranges(PCDH_isoforms_txdb))]
+
+# PCDHGB4(5:140767265-140892546) and PCDHGA8(5:140772200-140892546) need to be fixed manually.
+id_PCDHGB4<-which(names(PCDH_isoforms_txdb)=="8641")
+start(PCDH_isoforms_txdb[id_PCDHGB4,])<-140767265
+end(PCDH_isoforms_txdb[id_PCDHGB4,])<-140892546
+
+id_PCDHGA8<-which(names(PCDH_isoforms_txdb)=="9708")
+start(PCDH_isoforms_txdb[id_PCDHGA8,])<-140772200
+end(PCDH_isoforms_txdb[id_PCDHGA8,])<-140892546
+
+# Adding PCDHB9 track (chr5:140566735-140571114)
+gr_PCDHB9 <- GRanges(seqnames="chr5",IRanges(start=140566735,end=140571114), strand="+")
+gr_PCDHB9$gene_id<-"56127"
+gr_PCDHB9$symbol<-"PCDHB9"
+PCDH_isoforms_txdb<-c(gr_PCDHB9,PCDH_isoforms_txdb)
+
+# remove unrelated genes (non protein-coding genes/non PCDH genes)
+PCDH_isoforms_txdb<-subset(PCDH_isoforms_txdb,!PCDH_isoforms_txdb$symbol%in% c("PCDHB17P","PCDHB18P","PCDHB19P","SLC25A2","TAF7","PCDHGB8P"))
+PCDH_promoters_txdb<-promoters(PCDH_isoforms_txdb,upstream = 1500, downstream = 500) 
+```
+
+
+```{r}
+# Visualization of PCDH CpGs between blood and brain
+# Prepare differnt tracks
+# IdeogramTrack
+idtrack <- IdeogramTrack(genome = "hg19", chromosome = "chr5",fontcolor="black")
+
+# GenomeAxisTrack
+axisTrack <- GenomeAxisTrack()
+
+# Promoters track
+ann450K_PCDH_Promoters<-PCDH_promoters_txdb
+ann450K_PCDH_Promoters<-ann450K_PCDH_Promoters[,NULL]
+Promoters_track<-AnnotationTrack(ann450K_PCDH_Promoters, name = "Promoter",background.title="transparent",col.title="black",background.panel = "white",stacking="squish",fill="gray")
+
+# Blood data track
+ann450K_PCDH_blood<-ann450K_PCDH[,NULL]
+ann450K_PCDH_blood$Mean.methylation<-dat_mean_BIOS_PCDH$Mean.methylation
+ann450K_PCDH_blood$PCDHA<-c(ann450K_PCDH_blood$Mean.methylation[1:146],rep(NA,461))
+ann450K_PCDH_blood$PCDHB<-c(rep(NA,146),ann450K_PCDH_blood$Mean.methylation[147:348],rep(NA,259))
+ann450K_PCDH_blood$PCDHG<-c(rep(NA,348),ann450K_PCDH_blood$Mean.methylation[349:607])
+ann450K_PCDH_blood$Mean.methylation<-NULL
+dTrack_PCDH_blood<-DataTrack(ann450K_PCDH_blood,name="Blood DNAm (Beta)",groups=c(1,2,3),col=c("#F08080","#F08080","#F08080"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,shape=22) 
+
+# Brain data track
+annEPIC_PCDH_brain<-GRanges(seqnames="chr5",IRanges(start=dat_mean_BDR_PCDH$Start+1,end=dat_mean_BDR_PCDH$End), strand="*")
+names(annEPIC_PCDH_brain)<-dat_mean_BDR_PCDH$CpG
+annEPIC_PCDH_brain$Mean.methylation<-dat_mean_BDR_PCDH$Mean.methylation
+annEPIC_PCDH_brain$PCDHA<-c(annEPIC_PCDH_brain$Mean.methylation[1:199],rep(NA,548))
+annEPIC_PCDH_brain$PCDHB<-c(rep(NA,199),annEPIC_PCDH_brain$Mean.methylation[200:439],rep(NA,308))
+annEPIC_PCDH_brain$PCDHG<-c(rep(NA,439),annEPIC_PCDH_brain$Mean.methylation[440:747])
+annEPIC_PCDH_brain$Mean.methylation<-NULL
+dTrack_PCDH_brain<-DataTrack(annEPIC_PCDH_brain,name="Brain DNAm (Beta)",groups=c(1,2,3),col=c("#56B4E9","#56B4E9","#56B4E9"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F, shape = 22)  
+
+# Gene regions track
+grtrack <- GeneRegionTrack(txdb,genome="hg19", chromosome="chr5", start=140125721, end=140932546, name="Protocadherin gene cluster", transcriptAnnotation="symbol", stacking="squish", collapseTranscripts="longest",background.title="transparent",col.title="black",background.panel = "white", col="black",fontcolor="black",fontsize.group=35) 
+rt <- ranges(grtrack)
+rt$symbol <- mapIds(Homo.sapiens, rt$symbol, "SYMBOL", "TXNAME")
+rt<-subset(rt,!symbol%in%c("PCDHB17P","PCDHB18P","PCDHB19P","PCDHGB8P","SLC25A2","TAF7","DIAPH1"))
+ranges(grtrack) <- rt
+
+save(idtrack,axisTrack,dTrack_PCDH_blood,dTrack_PCDH_brain,Promoters_track,grtrack,file = "PCDH_Gviz_blood_brain.RData")
+
+pdf("Output_03_PCDH_Gviz_blood_brain.pdf",width = 23,height = 16)
+plotTracks(list(idtrack,axisTrack,dTrack_PCDH_blood,dTrack_PCDH_brain,Promoters_track,grtrack),type = c("a","p"),from =140124721,to=140933546,cex=2,cex.axis=1.8,cex.title=1.8,sizes = c(0.3,0.5,1,1,0.5,1.8))
+dev.off()
+```
+
+```{r}
+# Compare PCDH methylation between blood and brain
+Overlap_cpg<-intersect(rownames(dat_mean_BIOS_PCDH),dat_mean_BRD_PCDH$CpG)
+dat_mean_BIOS_PCDH_overlap<-dat_mean_BIOS_PCDH[Overlap_cpg,]
+rownames(dat_mean_BRD_PCDH)<-dat_mean_BRD_PCDH$CpG
+dat_mean_BRD_PCDH_overlap<-dat_mean_BRD_PCDH[Overlap_cpg,]
+dat_mean_PCDH_blood_brain<-data.frame(CpG=rownames(dat_mean_BIOS_PCDH_overlap),Blood=dat_mean_BIOS_PCDH_overlap$Mean.methylation,Brain=dat_mean_BRD_PCDH_overlap$Mean.methylation)  
+dat_mean_PCDH_blood_brain$Symbol<-dat_mean_BIOS_PCDH_overlap$Symbol
+save(dat_mean_PCDH_blood_brain,file = "Output_03_dat_mean_PCDH_blood_brain.RData")
+
+# Calculate r coefficient 
+data.table(dat_mean_PCDH_blood_brain)[,cor(Blood,Brain),by="Symbol"]
+r_coefficient <- data.frame(Symbol = c("PCDHA", "PCDHB", "PCDHG"), label = c("r=0.89", "r=0.94", "r=0.88"))
+
+scaleFUN <- function(x) sprintf("%.1f", x)
+pdf("Output_03_Comparison of PCDH methylation between blood and brain.pdf",width = 16,height = 8)
+ggplot(dat_mean_PCDH_blood_brain) +
+    aes(x = Blood,y = Brain,color=Symbol) +
+     geom_point(size = 3, alpha = 0.5) +
+     scale_x_continuous(limits=c(0, 1),labels = scaleFUN)+
+     scale_y_continuous(limits=c(0, 1),labels = scaleFUN)+
+  scale_color_manual(values = c("#00AFBB", "#E7B800", "#FC4E07"))+
+  geom_smooth(data=dat_mean_PCDH_blood_brain,formula = y ~ x,aes(x = Blood,y = Brain),colour="black",method ="lm",size=0.7,se = F)+
+  facet_grid(~Symbol,switch ="y",scales = "fixed") +
+  geom_text(x = 0.2, y = 0.95, aes(label = label), data = r_coefficient,size = 16,color="black")+
+  theme_bw()+
+  theme(panel.spacing.x = unit(.5, "cm"),legend.position = "none",axis.title.x = element_text(size = 43),axis.title.y = element_text(size = 43),axis.text.x = element_text(size = 43,angle = 45,hjust = 1),axis.text.y = element_text(size = 43),strip.text.x = element_text(size = 43))+
+    labs(x="Blood mean DNAm (Beta)",y="Brain mean DNAm (Beta)") 
+dev.off()
+```
+
+```{r}
+# Calculate the percentage of CpGs showing low DNA methylation level near PCDH isoforms
+# Blood
+ann450K_PCDH_blood$Symbol<-dat_mean_BIOS_PCDH$Symbol
+ann450K_PCDH_blood$Array<-"450k"
+OL_blood<-findOverlaps(ann450K_PCDH_blood,PCDH_promoters_txdb)
+ann450K_PCDH_blood$Promoters<-"FALSE"
+ann450K_PCDH_blood$Promoters[queryHits(OL_blood)] <- "TRUE"
+ann450K_PCDH_blood<-as.data.frame(ann450K_PCDH_blood)
+
+# Brain
+annEPIC_PCDH_brain$Symbol<-dat_mean_BDR_PCDH$Symbol
+annEPIC_PCDH_brain$Array<-"EPIC_v1"
+OL_brain<-findOverlaps(annEPIC_PCDH_brain,PCDH_promoters_txdb)
+annEPIC_PCDH_brain$Promoters<-"FALSE"
+annEPIC_PCDH_brain$Promoters[queryHits(OL_brain)] <- "TRUE"
+annEPIC_PCDH_brain<-as.data.frame(annEPIC_PCDH_brain)
+
+# save data
+write.csv2(ann450K_PCDH_blood,file = "ann450K_PCDH_blood.csv")
+write.csv2(annEPIC_PCDH_brain,file = "annEPIC_PCDH_brain.csv")
+```

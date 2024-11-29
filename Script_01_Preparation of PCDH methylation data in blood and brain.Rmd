@@ -1,0 +1,206 @@
+---
+title: "Script_01_Preparation of PCDH methylation data in blood and brain"
+author: "Yunfeng"
+date: '2024-5-31'
+output: html_document
+---
+
+```{r}
+#set library path.
+.libPaths("/exports/molepi/RSC_BIOS/Users/yliu/Rlibs")
+```
+
+
+```{r}
+#Load all necessary packages.
+library(SummarizedExperiment)
+library(FDb.InfiniumMethylation.hg19) 
+library(tidyverse)
+library(DNAmArray)
+library(minfi)
+library(irlba)
+library(ggfortify)
+library(data.table)
+```
+
+```{r}
+#Load DNA-methylation data (large, takes about 30 minutes).
+load(file="methData_Mvalues_BIOS_Freeze2_unrelated.RData")
+dim(mvalues)   # 481388    4386
+
+#Remove X and Y chromosome
+mvalues<-dropSeqlevels(mvalues,c("chrX","chrY"),pruning.mode = "coarse")
+dim(mvalues)   # 470211   4386 
+
+# Load maskProbes data
+maskProbes_450 <- as.data.frame(fread(file = "Input_01_HM450.hg19.manifest.tsv"))
+```
+
+```{r}
+## remove unreliable probes 
+## hg19 genome:60466 probes on whole genome are recommended to remove based on zhou et.al
+
+maskProbes_450 <- filter(maskProbes_450,MASK_general=="TRUE")
+mvalues_BIOS <- mvalues[!(rownames(mvalues) %in% maskProbes_450$probeID),] 
+dim(mvalues_BIOS) # 412373   4386
+
+# Remove some samples (N=263) who their age is missing
+table(is.na(mvalues_BIOS$sampling_age))  # 263
+col.mvalues.BIOS<-as.data.frame(colData(mvalues_BIOS))
+col.mvalues.BIOS<-col.mvalues.BIOS[!is.na(col.mvalues.BIOS$sampling_age),]
+mvalues_BIOS<-mvalues_BIOS[,colnames(mvalues_BIOS) %in% rownames(col.mvalues.BIOS)]
+dim(mvalues_BIOS)  # 412373   4123
+
+#Remove some problematic samples.
+#There is 1 covariate which contain certain levels causing singularities if it is included into the model:
+#sample_plate: levels "OV0192DNA001" and "OV0192DNA002".
+idx <- which(mvalues_BIOS$sample_plate == "OV0192DNA001" | mvalues_BIOS$sample_plate == "OV0192DNA002")
+
+#Now remove them.
+mvalues_BIOS <- mvalues_BIOS[,-idx]
+dim(mvalues_BIOS)  # 412373   4045
+
+# Sex mislabeled issues (Unfortunately,some samples are mixed-up in sex,we should exclude them from this analysis)
+# Because we don't know if their age are still correct
+# Load beta values
+load(file="methData_Betas_BIOS_Freeze2_unrelated.RData")
+dim(betas)      # 481388   4386
+
+betas_BIOS <- betas[!(rownames(betas) %in% maskProbes$probeID),]
+betas_BIOS<-betas_BIOS[,colnames(mvalues_BIOS)]
+dim(betas_BIOS) # 422156   4045
+
+# Check if predicted and real sexes are identical
+predictedSex <- as.data.frame(getSex.DNAmArray(assay(betas_BIOS)))
+colnames(predictedSex)<-"predictedSex"
+predictedSex$predictedSex[grepl("Male",predictedSex$predictedSex)]<-"male"
+predictedSex$predictedSex[grepl("Female",predictedSex$predictedSex)]<-"female"
+mvalues_BIOS$predictedSex<-predictedSex$predictedSex
+mvalues_BIOS$correctSex<-ifelse(colData(mvalues_BIOS)$predictedSex==colData(mvalues_BIOS)$sex,TRUE,FALSE)
+table(colData(mvalues_BIOS)$correctSex) # FALSE:11  TRUE:4032 NA:2(sex is missing)
+
+col.mvalues.BIOS<-as.data.frame(colData(mvalues_BIOS))
+col.mvalues.BIOS<-filter(col.mvalues.BIOS,correctSex==TRUE)
+mvalues_BIOS<-mvalues_BIOS[,rownames(col.mvalues.BIOS)]
+betas_BIOS<-betas_BIOS[,rownames(col.mvalues.BIOS)]
+betas_BIOS<-betas_BIOS[rownames(mvalues_BIOS),]
+dim(mvalues_BIOS) # 412373  4032
+dim(betas_BIOS)   # 412373  4032
+
+### One problematic female sample ("BIOS691E2BA5") should be removed based on PCA.
+pc_betas<- prcomp_irlba(t(assay(betas_BIOS)))
+tiff("PCA plot for sex.tiff", units="in", width=8, height=6, res=600,compression = 'lzw')
+autoplot(pc_betas,data=as.data.frame(colData(betas_BIOS)),label = TRUE,colour="sex",main="Principal components plot")
+dev.off() 
+
+# Similarly,remove this sample from betas and mvalues object.
+mvalues_BIOS<-mvalues_BIOS[,!(colnames(mvalues_BIOS)%in%"BIOS691E2BA5")]
+betas_BIOS<-betas_BIOS[,!(colnames(betas_BIOS)%in%"BIOS691E2BA5")]
+dim(mvalues_BIOS) # 412373 4031
+dim(betas_BIOS) # 412373 4031
+
+# Predicted Cell counts for all BIOS data by IDOL-ext
+load(file="Input_01_EpiDISH_Cellcounts_BIOS.RData")
+Cellcounts_BIOS_EpiDISH<-Cellcounts_BIOS_EpiDISH[colnames(mvalues_BIOS),]
+
+#Add additional variables to betas and mvalues object.
+betas_BIOS$CD4Tnv_predicted <- Cellcounts_BIOS_EpiDISH$CD4Tnv
+betas_BIOS$Baso_predicted <- Cellcounts_BIOS_EpiDISH$Baso
+betas_BIOS$CD4Tmem_predicted <- Cellcounts_BIOS_EpiDISH$CD4Tmem
+betas_BIOS$Bmem_predicted <- Cellcounts_BIOS_EpiDISH$Bmem
+betas_BIOS$Bnv_predicted <- Cellcounts_BIOS_EpiDISH$Bnv
+betas_BIOS$Treg_predicted <- Cellcounts_BIOS_EpiDISH$Treg
+betas_BIOS$CD8Tmem_predicted <- Cellcounts_BIOS_EpiDISH$CD8Tmem
+betas_BIOS$CD8Tnv_predicted <- Cellcounts_BIOS_EpiDISH$CD8Tnv
+betas_BIOS$Eos_predicted <- Cellcounts_BIOS_EpiDISH$Eos
+betas_BIOS$NK_predicted <- Cellcounts_BIOS_EpiDISH$NK
+betas_BIOS$Neu_predicted <- Cellcounts_BIOS_EpiDISH$Neu
+betas_BIOS$Mono_predicted <- Cellcounts_BIOS_EpiDISH$Mono
+
+mvalues_BIOS$CD4Tnv_predicted <- Cellcounts_BIOS_EpiDISH$CD4Tnv
+mvalues_BIOS$Baso_predicted <- Cellcounts_BIOS_EpiDISH$Baso
+mvalues_BIOS$CD4Tmem_predicted <- Cellcounts_BIOS_EpiDISH$CD4Tmem
+mvalues_BIOS$Bmem_predicted <- Cellcounts_BIOS_EpiDISH$Bmem
+mvalues_BIOS$Bnv_predicted <- Cellcounts_BIOS_EpiDISH$Bnv
+mvalues_BIOS$Treg_predicted <- Cellcounts_BIOS_EpiDISH$Treg
+mvalues_BIOS$CD8Tmem_predicted <- Cellcounts_BIOS_EpiDISH$CD8Tmem
+mvalues_BIOS$CD8Tnv_predicted <- Cellcounts_BIOS_EpiDISH$CD8Tnv
+mvalues_BIOS$Eos_predicted <- Cellcounts_BIOS_EpiDISH$Eos
+mvalues_BIOS$NK_predicted <- Cellcounts_BIOS_EpiDISH$NK
+mvalues_BIOS$Neu_predicted <- Cellcounts_BIOS_EpiDISH$Neu
+mvalues_BIOS$Mono_predicted <- Cellcounts_BIOS_EpiDISH$Mono
+
+save(mvalues_BIOS,file = "methData_mvalues_BIOS.RData")
+save(betas_BIOS,file = "methData_betas_BIOS.RData")
+
+#Keep DNA methylation data on chromosome 5.
+mvalues_BIOS_chr5 <- keepSeqlevels(mvalues_BIOS,"chr5", pruning.mode = "coarse")
+betas_BIOS_chr5<-betas_BIOS[rownames(mvalues_BIOS_chr5),]
+dim(mvalues_BIOS_chr5)  # 21252 4031
+dim(betas_BIOS_chr5)  # 21252 4031
+
+save(mvalues_BIOS_chr5,betas_BIOS_chr5,file="Output_01_methData_BIOS_chr5.RData")
+```
+
+
+```{r}
+#Make a GRanges object containing features of all 450K CpGs.
+ann450K <- features(FDb.InfiniumMethylation.hg19)
+
+#Select CpGs on chromosome 5 which were measured in the BIOS data.
+ann450K_chr5 <- ann450K[rownames(mvalues_BIOS_chr5)]
+
+#Remove  metadata and strand information, then sort the object.
+ann450K_chr5 <- ann450K_chr5[,NULL]
+strand(ann450K_chr5) <- "*"
+ann450K_chr5 <- sort(sortSeqlevels(ann450K_chr5))
+
+#Add the chromosome names to the metadata.
+ann450K_chr5$Chromosome <- factor(seqnames(ann450K_chr5))
+ann450K_chr5
+save(ann450K_chr5,file = "Output_01_ann450K_BIOS_chr5.RData")
+
+# PCDH regions were defined as PCDH- (α, β, γ) genes  
+PCDHA=GRanges(seqnames="chr5",ranges=IRanges(start = 140165721, end = 140391929))
+ann450K_PCDHA<-subsetByOverlaps(ann450K_chr5, PCDHA) # 146 CpGs
+ann450K_PCDHA$Symbol<-"PCDHA"
+
+PCDHB=GRanges(seqnames="chr5",ranges=IRanges(start = 140430979, end = 140627802))
+ann450K_PCDHB<-subsetByOverlaps(ann450K_chr5, PCDHB) # 202 CpGs
+ann450K_PCDHB$Symbol<-"PCDHB"
+
+PCDHG=GRanges(seqnames="chr5",ranges=IRanges(start = 140710252, end = 140892546))
+ann450K_PCDHG<-subsetByOverlaps(ann450K_chr5, PCDHG) # 259 CpGs
+ann450K_PCDHG$Symbol<-"PCDHG"
+
+ann450K_PCDH<-c(ann450K_PCDHA,ann450K_PCDHB,ann450K_PCDHG) # 607 CpGs
+
+save(ann450K_PCDHA,ann450K_PCDHB,ann450K_PCDHG,ann450K_PCDH,file = "Output_01_ann450k_BIOS_PCDH.RData")
+```
+
+```{r}
+# PCDH methylation data in BIOS blood
+mvalues_PCDH<-mvalues_BIOS_chr5[names(ann450K_PCDH),]
+betas_PCDH<-betas_BIOS_chr5[names(ann450K_PCDH),]
+save(mvalues_PCDH,betas_PCDH,file = "Output_01_methData_BIOS_PCDH.RData")
+```
+
+```{r}
+# chr5 mean methylation data in BDR brain
+dat_mean_BDR_chr5<-read.table(file = "Input_01_MethylationSumStatsChr5Sites.txt",header = T,row.names = 1)
+colnames(dat_mean_BDR_chr5)[2]<-"Mean.methylation"
+colnames(dat_mean_BDR_chr5)[3]<-"sd"
+
+# remove unreliable probes
+maskProbes_EPIC<-as.data.frame(fread(file = "Input_01_EPIC.hg19.manifest.masking.tsv.gz"))
+maskProbes_EPIC <- filter(maskProbes_EPIC,MASK_general=="TRUE")
+dat_mean_BDR_chr5 <-dat_mean_BDR_chr5[!(rownames(dat_mean_BDR_chr5)%in%maskProbes_EPIC$probeID ),] 
+save(dat_mean_BDR_chr5,file = "Output_01_dat_mean_BDR_chr5.RData")
+
+# PCDH mean methylation data in BDR brain
+dat_mean_BDR_PCDH<-read.table(file = "MethylationSumStatsPCDHSites.txt",header = T)
+colnames(dat_mean_BDR_PCDH)[7]<-"Mean.methylation"
+colnames(dat_mean_BDR_PCDH)[8]<-"sd"
+save(dat_mean_BDR_PCDH,file = "Output_01_dat_mean_BDR_PCDH.RData")
+```
+

@@ -1,0 +1,172 @@
+---
+title: "Script_07_cis_exppression_QTL_mapping"
+author: "Yunfeng"
+date: "2024-08-23"
+output: html_document
+---
+
+```{r}
+#set library path.
+.libPaths("/exports/molepi/RSC_BIOS/Users/yliu/Rlibs")
+```
+
+```{r}
+# load libraries
+library(SummarizedExperiment)
+library(EnsDb.Hsapiens.v75)
+library(edgeR)
+library(MatrixEQTL)
+library(cate)
+library(BiocParallel)
+```
+
+
+```{r}
+# load data
+load(file ="rnaSeqData_ReadCounts_BIOS_Freeze2_unrelated.RData")
+```
+
+
+```{r}
+# Prepare genetic data only for 4 top SNPs
+rs3811444_T<-dosages["1:248039451",,drop=FALSE]
+rs13062095_C<-dosages["3:101267385",,drop=FALSE]
+rs11599284_A<-dosages["10:135044009",,drop=FALSE]
+rs10775431_T<-dosages["18:2714889",,drop=FALSE]
+Four_QTL<-rbind(rs3811444_T,rs13062095_C,rs11599284_A,rs10775431_T)
+rownames(Four_QTL)<-c("rs3811444_T","rs13062095_C","rs11599284_A","rs10775431_T")
+save(Four_QTL,file = "Output_07_Four_QTL.RData")
+```
+
+
+```{r}
+#Select only the samples for which both RNA-seq and genetic data are available.
+counts<-counts[, na.omit(match(colnames(Four_QTL),colnames(counts)))]
+Four_QTL<-Four_QTL[, na.omit(match(colnames(counts),colnames(Four_QTL)))]
+
+#Finally, for some samples, the flowcell (on which assay chip the sample was measured) is NA. Remove these samples.
+#After filtering, you should end up with 3131 samples
+count.coldata <- colData(counts)
+idx <- which(is.na(count.coldata$flowcell_num) == TRUE)
+counts <- counts[,-idx]
+Four_QTL <- Four_QTL[,-idx]
+
+dim(counts)        # 56515 3013
+dim(Four_QTL)  # 607 3013 
+
+# Remove X and Y chromosome for the RNA-seq data.
+counts  <- dropSeqlevels(counts,  c("X", "Y"), pruning.mode = "coarse")
+dim(counts) # 53668  3013
+
+# Select protein-coding genes with sufficient counts, then transform the counts into counts per million.
+# Open ensembl database.
+edb75 <- EnsDb.Hsapiens.v75
+# Only keep protein-coding genes on autosomal.
+GeneEns <- genes(edb75, filter = GeneBiotypeFilter("protein_coding"))
+GeneEns <- keepStandardChromosomes(GeneEns, pruning.mode = "coarse")
+GeneEns <- sort(sortSeqlevels(GeneEns))
+values(GeneEns)[,c(2,4)] <- NULL
+GeneEns <- subset(GeneEns,!seqnames(GeneEns)%in%c("X","Y","MT"))
+protGenes<-GeneEns$gene_id
+idx_prot <- na.omit(match(protGenes,rownames(counts)))
+counts <- counts[idx_prot,]
+
+#Create an object containing log2-counts per million, using functions from the edgeR package. 
+log.cpm <- DGEList(counts = assay(counts))
+log.cpm <- calcNormFactors(log.cpm)
+log.cpm <- cpm(log.cpm,log = T)
+
+#Filter out lowly expressed genes (genes must have at least one count in 50% of samples).
+log.cpm<- log.cpm[rowSums(log.cpm> 0) > 0.5 * ncol(counts), ] 
+GeneEns_BIOS<-subset(GeneEns,GeneEns$gene_id%in%rownames(log.cpm))
+dim(log.cpm)  # 11769  3013
+
+counts<-counts[rownames(log.cpm),]
+dim(counts)   # 11769  3013
+
+#Perform a rank-inverse normal (RIN) transformation for each gene.
+RIN <- function(x) {
+  y <- rank(x, NA)
+  y <- ppoints(y)[y]
+  y <- qnorm(y)
+  x[!is.na(x)] <- y
+  x
+}
+
+RIN.counts <- t(apply(log.cpm, 1, RIN))
+save(counts,RIN.counts,Four_QTL,file = "Output_07_expression_QTL_mapping.RData")
+save(GeneEns_BIOS,file = "Output_07_GeneEns_BIOS.RData")
+```
+
+```{r}
+# Test if eQTLGen findings are true in our BIOS data
+id<- c("ENSG00000238243","ENSG00000138468","ENSG00000081148","ENSG00000182504","ENSG00000114354","ENSG00000144815","ENSG00000151650","ENSG00000127884","ENSG00000130640","ENSG00000151651","ENSG00000101574","ENSG00000101596","ENSG00000080986")
+RIN.counts_13<-RIN.counts[id,]
+rownames(RIN.counts_13)<-c("OR2W3","SENP7","IMPG2","CEP97","TFG","NXPE3","VENTX","ECHS1","TUBGCP2","ADAM8","METTL4","SMCHD1","NDC80")
+
+# Add predicted cell counts into counts object.
+Cellcounts_BIOS_EpiDISH<-Cellcounts_BIOS_EpiDISH[colnames(counts),]
+counts$CD4Tnv_predicted <- Cellcounts_BIOS_EpiDISH$CD4Tnv
+counts$Baso_predicted <- Cellcounts_BIOS_EpiDISH$Baso
+counts$CD4Tmem_predicted <- Cellcounts_BIOS_EpiDISH$CD4Tmem
+counts$Bmem_predicted <- Cellcounts_BIOS_EpiDISH$Bmem
+counts$Bnv_predicted <- Cellcounts_BIOS_EpiDISH$Bnv
+counts$Treg_predicted <- Cellcounts_BIOS_EpiDISH$Treg
+counts$CD8Tmem_predicted <- Cellcounts_BIOS_EpiDISH$CD8Tmem
+counts$CD8Tnv_predicted <- Cellcounts_BIOS_EpiDISH$CD8Tnv
+counts$Eos_predicted <- Cellcounts_BIOS_EpiDISH$Eos
+counts$NK_predicted <- Cellcounts_BIOS_EpiDISH$NK
+counts$Neu_predicted <- Cellcounts_BIOS_EpiDISH$Neu
+counts$Mono_predicted <- Cellcounts_BIOS_EpiDISH$Mono
+
+# Prepare covariates data
+cvrt<-as.data.frame(colData(counts))[c("***","***","***")]
+cvrt$biobank_id<-factor(cvrt$biobank_id)
+cvrt$flowcell_num<-factor(cvrt$flowcell_num)
+
+# Running models and keep t-statistics between SNP-CpG pairs
+eQTL_mapping<- function(i){
+  #Select 1 SNP, and add it to the design matrix as the primary variable.
+  snp <- t(Four_QTL)[,i]
+  design <- data.frame(snp,cvrt)   
+  design <- model.matrix(~ ., design)
+  
+  # Estimated latent factors by cate.
+  fit_eQTL <- cate.fit(design[, 2, drop = F],design[, -2],t(RIN.counts_13),r = factors,calibrate = F)
+  z <- fit_eQTL$Z
+  colnames(z) <- paste0("SV", 1:factors)
+  
+  # Add latent factors to covariates data.
+  cvrt_sv<-data.frame(cvrt,z)
+  cvrt_sv<-t(model.matrix(~.,data=cvrt_sv)[,-1])
+  
+  #Run the eQTL analysis for this SNP. 
+        me = Matrix_eQTL_engine(
+            snps = SlicedData$new(Four_QTL[i,,drop=FALSE]),
+            gene = SlicedData$new(RIN.counts_13),
+            cvrt = SlicedData$new(cvrt_sv),
+            output_file_name = NULL,
+            pvOutputThreshold = 1,
+            useModel = modelLINEAR,
+            errorCovariance = numeric(),
+            verbose = TRUE,
+            pvalue.hist = FALSE,
+            min.pv.by.genesnp = FALSE,
+            noFDRsaveMemory = FALSE
+        )
+  
+  # Extract the beta-estimates and p-values for each SNP
+  dat_eQTL_4loci<-me$all$eqtls
+  dat_eQTL_4loci<-dat_eQTL_4loci[,c("snps","gene","beta","statistic","pvalue")]
+  colnames(dat_eQTL_4loci)[4]<-"t-satistics"
+  dat_eQTL_4loci 
+}
+
+factors<-2
+BPPARAM <- MulticoreParam(1)
+dat_eQTL_4loci <- bplapply(1:ncol(t(Four_QTL)), FUN=eQTL_mapping, BPPARAM=BPPARAM) 
+dat_eQTL_4loci<-do.call(rbind,dat_eQTL_4loci)
+save(dat_eQTL_4loci,file = "Output_07_dat_eQTL_4loci.RData")
+```
+
+

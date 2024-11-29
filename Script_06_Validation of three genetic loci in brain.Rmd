@@ -1,0 +1,666 @@
+---
+title: "Script_06_Validation of three genetic loci in brain"
+author: "Yunfeng"
+date: "2024-07-10"
+output: html_document
+---
+
+```{r}
+#set library path.
+.libPaths("/exports/molepi/RSC_BIOS/Users/yliu/Rlibs")
+```
+
+```{r}
+# load libraries
+library(SummarizedExperiment)
+library(BiocParallel)
+library(data.table)
+library(locuszoomr)
+library(EnsDb.Hsapiens.v75)
+library(tidyverse)
+library(Gviz)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(Homo.sapiens)
+```
+
+```{r}
+# Load data
+load(file = "SimesPValue_chr1_22_X.RData")
+```
+
+```{r}
+# Prepare locus zoom data
+meQTL_PCDH_locuszoom<-SimesPValue_chr1_22_X[,1:2]
+meQTL_PCDH_locuszoom$chrom<-gsub("[:].*$", "", rownames(meQTL_PCDH))
+id<-which(rownames(meQTL_PCDH_locuszoom)%in%c("2:7.2e+07","6:1.36e+08", "9:8e+07","10:1.2e+07","12:4.8e+07"))
+rownames(meQTL_PCDH_locuszoom)[id]<-c("2:72000000","6:136000000","9:80000000","10:12000000","12:48000000")
+snps <- rownames(meQTL_PCDH_locuszoom)
+
+folder <- "/exports/molepi/RSC_BIOS/RP3_data/HRCv1.1_Imputation/CODAM/"
+files <- list.files(folder, recursive = T, pattern = "info")
+files <- files[!grepl("chrX.no.auto_male.info.gz", files)]
+
+info <- bplapply(files, function(file) {
+  
+  data <- read.delim(paste0(folder, file))
+  data <- data[, c("SNP", "REF.0.", "ALT.1.")]
+  data[which(data$SNP %in% snps), ]
+  
+}, BPPARAM = MulticoreParam(16))
+
+info <- do.call(rbind, info)
+rownames(info)<-info$SNP
+info<-info[rownames(meQTL_PCDH_locuszoom),]
+meQTL_PCDH_locuszoom$ref<-info$REF.0.
+meQTL_PCDH_locuszoom$alt<-info$ALT.1.
+meQTL_PCDH_locuszoom<-meQTL_PCDH_locuszoom[,c(3,2,4,5,1)]
+colnames(meQTL_PCDH_locuszoom)<-c("chrom","pos"," ref","alt","p")
+meQTL_PCDH_locuszoom$chromosome<-gsub("X","23",meQTL_PCDH$chromosome)
+meQTL_PCDH_locuszoom$chromosome<-as.numeric(meQTL_PCDH$chromosome)
+meQTL_PCDH_locuszoom<-meQTL_PCDH_locuszoom[order(meQTL_PCDH_locuszoom$chromosome,meQTL_PCDH_locuszoom$position),] 
+write.table(meQTL_PCDH_locuszoom,file = "Output_06_meQTL_PCDH_locuszoom.txt",sep = '\t',row.names = FALSE,quote = F,col.names = FALSE)
+```
+
+```{r}
+# OR2W3 locus
+# Locus zoom plot of rs3811444
+meQTL_PCDH_locuszoom<-fread(file="Output_06_meQTL_PCDH_locuszoom.txt")
+colnames(meQTL_PCDH_locuszoom)<-c("chrom","pos","ref","alt","p")
+
+meQTL_PCDH_sumstats<-fread(file="Input_06_meQTL_PCDH_sumstats.gz")
+meQTL_PCDH_sumstats<-meQTL_PCDH_sumstats[,c(1,2,3,4,5)]
+colnames(meQTL_PCDH_sumstats)<-c("chrom","pos","rsid","ref","alt")
+meQTL_PCDH_sumstats$p<-meQTL_PCDH_locuszoom$p
+
+loc_OR2W3 <- locus(meQTL_PCDH_sumstats, gene = 'TRIM58',flank = 2e5,ens_db = "EnsDb.Hsapiens.v75")
+loc_OR2W3 <- link_LD(loc_OR2W3, token = "58fa6d42ffb8") # Obtaining LD information
+loc_OR2W3<-link_recomb(loc_OR2W3, genome = "hg19") # Add recombination rate
+
+pdf("rs3811444_OR2W3_locuszoom.pdf",width = 8, height = 6) 
+locus_plot(loc_OR2W3,labels = "index",filter_gene_biotype = "protein_coding") 
+dev.off()
+
+# OR2W3 variant on PCDH methylation in blood and brain
+### BIOS blood
+rs3811444_OR2W3_PCDH_blood<-rs3811444_chr1_PCDH_hit
+rs3811444_OR2W3_PCDH_blood<-rs3811444_OR2W3_PCDH_blood[,c(1,2,3,4,5,7,9,6)]
+colnames(rs3811444_OR2W3_PCDH_blood)[4]<-"t.stat"
+colnames(rs3811444_OR2W3_PCDH_blood)[5]<-"pvalue"
+colnames(rs3811444_OR2W3_PCDH_blood)[7]<-"Position"
+colnames(rs3811444_OR2W3_PCDH_blood)[8]<-"Symbol"
+rs3811444_OR2W3_PCDH_blood$Tissue<-"Blood"
+
+### BDR brain
+rs3811444_OR2W3_PCDH_brain<-subset(Trans_meQTL_PCDH_brain_validation,SNP=="1.248039451_T")
+rownames(rs3811444_OR2W3_PCDH_brain)<-rs3811444_OR2W3_PCDH_brain$gene
+rs3811444_OR2W3_PCDH_brain<-rs3811444_OR2W3_PCDH_brain[dat_mean_BDR_PCDH$CpG,]
+rs3811444_OR2W3_PCDH_brain$beta<-rs3811444_OR2W3_PCDH_brain$beta/dat_mean_BDR_PCDH$sd
+rs3811444_OR2W3_PCDH_brain$Position<-dat_mean_BDR_PCDH$Start+1
+rs3811444_OR2W3_PCDH_brain$Symbol<-dat_mean_BDR_PCDH$Symbol
+rs3811444_OR2W3_PCDH_brain$Tissue<-"Brain"
+colnames(rs3811444_OR2W3_PCDH_brain)[5]<-"pvalue"
+rownames(rs3811444_OR2W3_PCDH_brain)<-NULL
+save(rs3811444_OR2W3_PCDH_blood,rs3811444_OR2W3_PCDH_brain,file = "Output_06_OR2W3_variant_PCDH_blood_brain.RData")
+
+# Check OR2W3 statistical significance consistency between blood and brain
+rs3811444_OR2W3_PCDH_blood<-rs3811444_OR2W3_PCDH_blood[,-c(4,5)]
+rs3811444_OR2W3_PCDH_blood$col<-ifelse(rs3811444_OR2W3_PCDH_blood$p.adj<0.05,"FDR significant in blood","FDR not significant in blood")
+colnames(rs3811444_OR2W3_PCDH_blood)[4]<-"pvalue"
+
+rs3811444_OR2W3_PCDH_brain<-rs3811444_OR2W3_PCDH_brain[,-4]
+rs3811444_OR2W3_PCDH_brain$col<-ifelse(rs3811444_OR2W3_PCDH_brain$pvalue<0.05,"Nominal p-value significant in brain","Nominal p-value not significant in brain")
+
+rs3811444_OR2W3_PCDH_blood_brain<-rbind(rs3811444_OR2W3_PCDH_blood,rs3811444_OR2W3_PCDH_brain)
+rs3811444_OR2W3_PCDH_blood_brain$col<-factor(rs3811444_OR2W3_PCDH_blood_brain$col,levels=c("FDR significant in blood","FDR not significant in blood","Nominal p-value significant in brain","Nominal p-value not significant in brain"))
+save(rs3811444_OR2W3_PCDH_blood_brain,file = "Output_06_rs3811444_OR2W3_PCDH_blood_brain.RData")
+
+# Check OR2W3 effect size consistency between blood and brain
+id_overlap<-intersect(rs3811444_OR2W3_PCDH_blood$gene,rs3811444_OR2W3_PCDH_brain$gene)
+
+rs3811444_OR2W3_PCDH_blood_brain_overlap<-subset(rs3811444_OR2W3_PCDH_blood_brain,gene%in%id_overlap)
+rs3811444_OR2W3_PCDH_blood_overlap<-subset(rs3811444_OR2W3_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs3811444_OR2W3_PCDH_brain_overlap<-subset(rs3811444_OR2W3_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs3811444_OR2W3_PCDH_blood_overlap$Significance<-ifelse(rs3811444_OR2W3_PCDH_blood_overlap$col=="FDR not significant in blood"&rs3811444_OR2W3_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Neither",ifelse(rs3811444_OR2W3_PCDH_blood_overlap$col=="FDR significant in blood"&rs3811444_OR2W3_PCDH_brain_overlap$col=="Nominal p-value significant in brain","Blood & Brain",ifelse(rs3811444_OR2W3_PCDH_blood_overlap$col=="FDR significant in blood"&rs3811444_OR2W3_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Blood only","Brain only")))
+rs3811444_OR2W3_PCDH_brain_overlap$Significance<-rs3811444_OR2W3_PCDH_blood_overlap$Significance
+rs3811444_OR2W3_PCDH_blood_brain_overlap<-rbind(rs3811444_OR2W3_PCDH_blood_overlap,rs3811444_OR2W3_PCDH_brain_overlap)
+save(rs3811444_OR2W3_PCDH_blood_brain_overlap,file = "Output_06_rs3811444_OR2W3_PCDH_blood_brain_overlap.RData")    
+
+rs3811444_OR2W3_PCDH_blood_overlap<-filter(rs3811444_OR2W3_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs3811444_OR2W3_PCDH_brain_overlap<-filter(rs3811444_OR2W3_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs3811444_OR2W3_PCDH_blood_brain_overlap_es<-data.frame(CpG=rs3811444_OR2W3_PCDH_blood_overlap$gene,blood.es=rs3811444_OR2W3_PCDH_blood_overlap$beta,brain.es=rs3811444_OR2W3_PCDH_brain_overlap$beta,Symbol=rs3811444_OR2W3_PCDH_blood_overlap$Symbol,Significance=rs3811444_OR2W3_PCDH_blood_overlap$Significance) 
+save(rs3811444_OR2W3_PCDH_blood_brain_overlap_es,file = "Output_06_rs3811444_OR2W3_PCDH_blood_brain_overlap_es.RData")
+
+rs3811444_OR2W3_PCDH_blood_brain_overlap_es$loci<-"OR2W3"
+rs3811444_OR2W3_PCDH_blood_brain_overlap_es$Significance<-factor(rs3811444_OR2W3_PCDH_blood_brain_overlap_es$Significance,levels = c("Blood only","Brain only","Neither"))
+scaleFUN <- function(x) sprintf("%.1f", x)
+
+pdf("OR2W3_PCDH_blood_brain_overlap_es.pdf", width=8, height=8)
+ggplot(rs3811444_OR2W3_PCDH_blood_brain_overlap_es) +
+          aes(x=blood.es,y=brain.es,color=Significance) +
+          geom_point(size=3, alpha = 0.7) +
+          geom_vline(aes(xintercept=0)) +
+          geom_hline(aes(yintercept=0)) +
+          geom_abline(slope=1, intercept = 0)+
+          scale_x_continuous(limits=c(-0.3, 0.3),labels = scaleFUN)+
+          scale_y_continuous(limits=c(-0.3, 0.3),labels = scaleFUN)+
+          scale_color_manual(values=c("#E76254","#56B4E9","#E9E7E8"))+
+          facet_wrap(~loci,scales = "fixed") +
+          theme_bw() +
+          theme(legend.position = "bottom",legend.text =element_text(size = 25),legend.title = element_blank(),axis.title.x =element_text(size = 25),axis.title.y = element_text(size = 25),axis.text.x = element_text(size = 25,angle = 45,hjust = 1),axis.text.y = element_text(size = 25),strip.text.x = element_text(size = 25))+ 
+   labs(x="Blood effect size",y="Brain effect size") 
+dev.off()
+```
+
+```{r}
+# SENP7 locus
+loc_SENP7 <- locus(meQTL_PCDH_sumstats, gene = 'TRMT10C',flank = 2e5,ens_db = "EnsDb.Hsapiens.v75")
+loc_SENP7 <- link_LD(loc_SENP7, token = "58fa6d42ffb8") # Obtaining LD information
+loc_SENP7<-link_recomb(loc_SENP7, genome = "hg19") # Add recombination rate
+
+pdf("rs13062095_SENP7_locuszoom.pdf",width = 8, height = 6) 
+locus_plot(loc_SENP7,labels = "index",filter_gene_biotype = "protein_coding") 
+dev.off()
+
+# SENP7 variant on PCDH methylation in blood and brain
+### BIOS blood
+rs13062095_SENP7_PCDH_blood<-rs13062095_chr3_PCDH_hit
+rs13062095_SENP7_PCDH_blood<-rs13062095_SENP7_PCDH_blood[,c(1,2,3,4,5,7,9,6)]
+colnames(rs13062095_SENP7_PCDH_blood)[4]<-"t.stat"
+colnames(rs13062095_SENP7_PCDH_blood)[5]<-"pvalue"
+colnames(rs13062095_SENP7_PCDH_blood)[7]<-"Position"
+colnames(rs13062095_SENP7_PCDH_blood)[8]<-"Symbol"
+rs13062095_SENP7_PCDH_blood$Tissue<-"Blood"
+
+### BDR brain
+rs13062095_SENP7_PCDH_brain<-subset(Trans_meQTL_PCDH_brain_validation,SNP=="3.101267385_C")
+rownames(rs13062095_SENP7_PCDH_brain)<-rs13062095_SENP7_PCDH_brain$gene
+rs13062095_SENP7_PCDH_brain<-rs13062095_SENP7_PCDH_brain[dat_mean_BDR_PCDH$CpG,]
+rs13062095_SENP7_PCDH_brain$beta<-rs13062095_SENP7_PCDH_brain$beta/dat_mean_BDR_PCDH$sd
+rs13062095_SENP7_PCDH_brain$Position<-dat_mean_BDR_PCDH$Start+1
+rs13062095_SENP7_PCDH_brain$Symbol<-dat_mean_BDR_PCDH$Symbol
+rs13062095_SENP7_PCDH_brain$Tissue<-"Brain"
+colnames(rs13062095_SENP7_PCDH_brain)[5]<-"pvalue"
+rownames(rs13062095_SENP7_PCDH_brain)<-NULL
+save(rs13062095_SENP7_PCDH_blood,rs13062095_SENP7_PCDH_brain,file = "Output_06_SENP7_variant_PCDH_blood_brain.RData")
+
+# Check SENP7 statistical significance consistency between blood and brain
+rs13062095_SENP7_PCDH_blood<-rs13062095_SENP7_PCDH_blood[,-c(4,5)]
+rs13062095_SENP7_PCDH_blood$col<-ifelse(rs13062095_SENP7_PCDH_blood$p.adj<0.05,"FDR significant in blood","FDR not significant in blood")
+colnames(rs13062095_SENP7_PCDH_blood)[4]<-"pvalue"
+
+rs13062095_SENP7_PCDH_brain<-rs13062095_SENP7_PCDH_brain[,-4]
+rs13062095_SENP7_PCDH_brain$col<-ifelse(rs13062095_SENP7_PCDH_brain$pvalue<0.05,"Nominal p-value significant in brain","Nominal p-value not significant in brain")
+
+rs13062095_SENP7_PCDH_blood_brain<-rbind(rs13062095_SENP7_PCDH_blood,rs13062095_SENP7_PCDH_brain)
+rs13062095_SENP7_PCDH_blood_brain$col<-factor(rs13062095_SENP7_PCDH_blood_brain$col,levels=c("FDR significant in blood","FDR not significant in blood","Nominal p-value significant in brain","Nominal p-value not significant in brain"))
+save(rs13062095_SENP7_PCDH_blood_brain,file = "Output_06_rs13062095_SENP7_PCDH_blood_brain.RData")
+
+# Check SENP7 effect size consistency between blood and brain
+id_overlap<-intersect(rs13062095_SENP7_PCDH_blood$gene,rs13062095_SENP7_PCDH_brain$gene)
+
+rs13062095_SENP7_PCDH_blood_brain_overlap<-subset(rs13062095_SENP7_PCDH_blood_brain,gene%in%id_overlap)
+rs13062095_SENP7_PCDH_blood_overlap<-subset(rs13062095_SENP7_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs13062095_SENP7_PCDH_brain_overlap<-subset(rs13062095_SENP7_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs13062095_SENP7_PCDH_blood_overlap$Significance<-ifelse(rs13062095_SENP7_PCDH_blood_overlap$col=="FDR not significant in blood"&rs13062095_SENP7_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Neither",ifelse(rs13062095_SENP7_PCDH_blood_overlap$col=="FDR significant in blood"&rs13062095_SENP7_PCDH_brain_overlap$col=="Nominal p-value significant in brain","Blood & Brain",ifelse(rs13062095_SENP7_PCDH_blood_overlap$col=="FDR significant in blood"&rs13062095_SENP7_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Blood only","Brain only")))
+rs13062095_SENP7_PCDH_brain_overlap$Significance<-rs13062095_SENP7_PCDH_blood_overlap$Significance
+rs13062095_SENP7_PCDH_blood_brain_overlap<-rbind(rs13062095_SENP7_PCDH_blood_overlap,rs13062095_SENP7_PCDH_brain_overlap)
+save(rs13062095_SENP7_PCDH_blood_brain_overlap,file = "Output_06_rs13062095_SENP7_PCDH_blood_brain_overlap.RData")    
+
+rs13062095_SENP7_PCDH_blood_overlap<-filter(rs13062095_SENP7_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs13062095_SENP7_PCDH_brain_overlap<-filter(rs13062095_SENP7_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs13062095_SENP7_PCDH_blood_brain_overlap_es<-data.frame(CpG=rs13062095_SENP7_PCDH_blood_overlap$gene,blood.es=rs13062095_SENP7_PCDH_blood_overlap$beta,brain.es=rs13062095_SENP7_PCDH_brain_overlap$beta,Symbol=rs13062095_SENP7_PCDH_blood_overlap$Symbol,Significance=rs13062095_SENP7_PCDH_blood_overlap$Significance) 
+save(rs13062095_SENP7_PCDH_blood_brain_overlap_es,file = "Output_06_rs13062095_SENP7_PCDH_blood_brain_overlap_es.RData")
+
+rs13062095_SENP7_PCDH_blood_brain_overlap_es$loci<-"SENP7"
+rs13062095_SENP7_PCDH_blood_brain_overlap_es$Significance<-factor(rs13062095_SENP7_PCDH_blood_brain_overlap_es$Significance,levels = c("Blood & Brain","Blood only","Brain only","Neither"))
+scaleFUN <- function(x) sprintf("%.1f", x)
+
+pdf("SENP7_PCDH_blood_brain_overlap_es.pdf", width=12, height=12)
+ggplot(rs13062095_SENP7_PCDH_blood_brain_overlap_es) +
+          aes(x=blood.es,y=brain.es,color=Significance) +
+          geom_point(size=5, alpha = 0.7) +
+          geom_vline(aes(xintercept=0)) +
+          geom_hline(aes(yintercept=0)) +
+          geom_abline(slope=1, intercept = 0)+
+          scale_x_continuous(limits=c(-0.3, 0.3),labels = scaleFUN)+
+          scale_y_continuous(limits=c(-0.3, 0.3),labels = scaleFUN)+
+          scale_color_manual(values=c("#1FA759","#E76254","#56B4E9","#E9E7E8"))+
+          facet_wrap(~loci,scales = "fixed") +
+          theme_bw() +
+          theme(legend.position = "bottom",legend.text =element_text(size = 30),legend.title = element_blank(),axis.title.x =element_text(size = 35),axis.title.y = element_text(size = 35),axis.text.x = element_text(size = 35,angle = 45,hjust = 1),axis.text.y = element_text(size = 35),strip.text.x = element_text(size = 35))+ 
+   labs(x="Blood effect size",y="Brain effect size") 
+dev.off()
+```
+
+```{r}
+#### Gviz for SENP7 variant on PCDH methylation in blood and brain,and there are five data tracks need to be prepared.
+# Data track1 (effect direction in blood)
+# Positive effect (Significant)
+colnames(rs13062095_SENP7_PCDH_blood)[2]<-"cpg"
+colnames(rs13062095_SENP7_PCDH_brain)[2]<-"cpg"
+
+rs13062095_SENP7_PCDH_blood_positive_sig<-filter(rs13062095_SENP7_PCDH_blood,beta>0&p.adj<0.05)
+rs13062095_SENP7_PCDH_blood_positive_sig$Significance<--log10(rs13062095_SENP7_PCDH_blood_positive_sig$pvalue)
+
+# Negative effect (Significant)
+rs13062095_SENP7_PCDH_blood_negative_sig<-filter(rs13062095_SENP7_PCDH_blood,beta<0&p.adj<0.05)  
+rs13062095_SENP7_PCDH_blood_negative_sig$Significance<--(-log10(rs13062095_SENP7_PCDH_blood_negative_sig$pvalue)) 
+
+# Positive effect (Not significant)
+rs13062095_SENP7_PCDH_blood_positive_not_sig<-filter(rs13062095_SENP7_PCDH_blood,beta>0&p.adj>0.05)
+rs13062095_SENP7_PCDH_blood_positive_not_sig$Significance<--log10(rs13062095_SENP7_PCDH_blood_positive_not_sig$pvalue) 
+
+# Negative effect (Not significant)
+rs13062095_SENP7_PCDH_blood_negative_not_sig<-filter(rs13062095_SENP7_PCDH_blood,beta<0&p.adj>0.05)
+rs13062095_SENP7_PCDH_blood_negative_not_sig$Significance<--(-log10(rs13062095_SENP7_PCDH_blood_negative_not_sig$pvalue)) 
+
+rs13062095_SENP7_PCDH_blood_positive_negative_all<-rbind(rs13062095_SENP7_PCDH_blood_positive_not_sig,rs13062095_SENP7_PCDH_blood_negative_not_sig,rs13062095_SENP7_PCDH_blood_positive_sig,rs13062095_SENP7_PCDH_blood_negative_sig)
+
+# Data track2 (Mean methylation in blood)
+rs13062095_SENP7_PCDH_blood_mean<-rbind(rs13062095_SENP7_PCDH_blood_positive_not_sig,rs13062095_SENP7_PCDH_blood_negative_not_sig,rs13062095_SENP7_PCDH_blood_positive_sig,rs13062095_SENP7_PCDH_blood_negative_sig)
+
+# Data track3 (effect direction in brain)
+# Positive effect (Significant)
+rs13062095_SENP7_PCDH_brain_positive_sig<-filter(rs13062095_SENP7_PCDH_brain,beta>0&pvalue<0.05)
+rs13062095_SENP7_PCDH_brain_positive_sig$Significance<--log10(rs13062095_SENP7_PCDH_brain_positive_sig$pvalue)
+
+# Negative effect (Significant)
+rs13062095_SENP7_PCDH_brain_negative_sig<-filter(rs13062095_SENP7_PCDH_brain,beta<0&pvalue<0.05) 
+rs13062095_SENP7_PCDH_brain_negative_sig$Significance<--(-log10(rs13062095_SENP7_PCDH_brain_negative_sig$pvalue)) 
+
+# Positive effect (Not Significant)
+rs13062095_SENP7_PCDH_brain_positive_not_sig<-filter(rs13062095_SENP7_PCDH_brain,beta>0&pvalue>0.05)
+rs13062095_SENP7_PCDH_brain_positive_not_sig$Significance<--log10(rs13062095_SENP7_PCDH_brain_positive_not_sig$pvalue)
+
+# Negative effect (Not Significant)
+rs13062095_SENP7_PCDH_brain_negative_not_sig<-filter(rs13062095_SENP7_PCDH_brain,beta<0&pvalue>0.05)
+rs13062095_SENP7_PCDH_brain_negative_not_sig$Significance<--(-log10(rs13062095_SENP7_PCDH_brain_negative_not_sig$pvalue))
+
+rs13062095_SENP7_PCDH_brain_positive_negative_all<-rbind(rs13062095_SENP7_PCDH_brain_positive_not_sig,rs13062095_SENP7_PCDH_brain_negative_not_sig,rs13062095_SENP7_PCDH_brain_positive_sig,rs13062095_SENP7_PCDH_brain_negative_sig)
+
+# Data track4 (Mean methylation in brain)
+rs13062095_SENP7_PCDH_brain_mean<-rbind(rs13062095_SENP7_PCDH_brain_positive_not_sig,rs13062095_SENP7_PCDH_brain_negative_not_sig,rs13062095_SENP7_PCDH_brain_positive_sig,rs13062095_SENP7_PCDH_brain_negative_sig)
+
+# Data track5 (PCDH promoters:1500 upstream to 500 downstream of TSS)
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+PCDH_isoforms<-GRanges(seqnames="chr5",ranges=IRanges(start = 140165721, end = 140892546))
+PCDH_isoforms_txdb<-subsetByOverlaps(genes(txdb),PCDH_isoforms)
+PCDH_isoforms_symbol<-select(org.Hs.eg.db,PCDH_isoforms_txdb$gene_id,"SYMBOL")
+PCDH_isoforms_txdb$symbol<-PCDH_isoforms_symbol$SYMBOL
+PCDH_isoforms_txdb<-PCDH_isoforms_txdb[order(ranges(PCDH_isoforms_txdb))]
+
+# PCDHGB4(5:140767265-140892546) and PCDHGA8(5:140772200-140892546) need to be fixed manually.
+id_PCDHGB4<-which(names(PCDH_isoforms_txdb)=="8641")
+start(PCDH_isoforms_txdb[id_PCDHGB4,])<-140767265
+end(PCDH_isoforms_txdb[id_PCDHGB4,])<-140892546
+
+id_PCDHGA8<-which(names(PCDH_isoforms_txdb)=="9708")
+start(PCDH_isoforms_txdb[id_PCDHGA8,])<-140772200
+end(PCDH_isoforms_txdb[id_PCDHGA8,])<-140892546
+
+# Adding PCDHB9 track (chr5:140566735-140571114)
+gr_PCDHB9 <- GRanges(seqnames="chr5",IRanges(start=140566735,end=140571114), strand="+")
+gr_PCDHB9$gene_id<-"56127"
+gr_PCDHB9$symbol<-"PCDHB9"
+PCDH_isoforms_txdb<-c(gr_PCDHB9,PCDH_isoforms_txdb)
+
+# remove unrelated genes (non protein-coding genes/non PCDH genes)
+PCDH_isoforms_txdb<-subset(PCDH_isoforms_txdb,!PCDH_isoforms_txdb$symbol%in% c("PCDHB17P","PCDHB18P","PCDHB19P","SLC25A2","TAF7","PCDHGB8P"))
+PCDH_promoters_txdb<-promoters(PCDH_isoforms_txdb,upstream = 1500, downstream = 500) 
+ann450K_PCDH_Promoters<-PCDH_promoters_txdb
+ann450K_PCDH_Promoters<-ann450K_PCDH_Promoters[,NULL]
+
+#### Gviz plot
+# IdeogramTrack
+idtrack <- IdeogramTrack(genome = "hg19", chromosome = "chr5",fontcolor="black")
+
+# GenomeAxisTrack
+axisTrack <- GenomeAxisTrack()
+
+# Promoters track 
+Promoters_track<-AnnotationTrack(ann450K_PCDH_Promoters, name = "Promoter",background.title="transparent",col.title="black",background.panel = "white",stacking="squish",fill="gray")
+
+# Blood data track for effect direction
+ann450K_PCDH_blood_direction<-ann450K_PCDH[,NULL]
+ann450K_PCDH_blood_direction<-ann450K_PCDH_blood_direction[rs13062095_SENP7_PCDH_blood_positive_negative_all$cpg,]
+ann450K_PCDH_blood_direction$Significance<-rs13062095_SENP7_PCDH_blood_positive_negative_all$Significance
+ann450K_PCDH_blood_direction$gray<-c(ann450K_PCDH_blood_direction$Significance[1:502],rep(NA,105))
+ann450K_PCDH_blood_direction$red<-c(rep(NA,502),ann450K_PCDH_blood_direction$Significance[503:607])
+ann450K_PCDH_blood_direction$Significance<-NULL
+dTrack_PCDH_blood_direction<-DataTrack(ann450K_PCDH_blood_direction,name="-log10 (P)",groups=c(1,2),col=c("#E9E7E8","#E76254"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,ylim=c(-12,12),yTicksAt=c(-12,-6,0,6,12),baseline=0,col.baseline="black",lwd.baseline=2)
+
+# Blood data track for mean methylation
+# without line
+dat_mean_BIOS_PCDH<-dat_mean_BIOS_PCDH[rs13062095_SENP7_PCDH_blood_mean$cpg,]
+ann450K_PCDH_blood_mean_without_line<-ann450K_PCDH[,NULL]
+ann450K_PCDH_blood_mean_without_line<-ann450K_PCDH_blood_mean_without_line[rs13062095_SENP7_PCDH_blood_mean$cpg,]
+ann450K_PCDH_blood_mean_without_line$Mean.methylation<-dat_mean_BIOS_PCDH$Mean.methylation
+ann450K_PCDH_blood_mean_without_line$gray<-c(ann450K_PCDH_blood_mean_without_line$Mean.methylation[1:502],rep(NA,105))
+ann450K_PCDH_blood_mean_without_line$red<-c(rep(NA,502),ann450K_PCDH_blood_mean_without_line$Mean.methylation[503:607])
+ann450K_PCDH_blood_mean_without_line$Mean.methylation<-NULL
+dTrack_PCDH_blood_mean_without_line<-DataTrack(ann450K_PCDH_blood_mean_without_line,name="DNAm (Beta)",groups=c(1,2),col=c("#E9E7E8","#E76254"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F)
+
+# with line
+ann450K_PCDH_blood_mean_with_line<-ann450K_PCDH[,NULL]
+ann450K_PCDH_blood_mean_with_line<-ann450K_PCDH_blood_mean_with_line[rs13062095_SENP7_PCDH_blood_mean$cpg,]
+ann450K_PCDH_blood_mean_with_line$Mean.methylation<-dat_mean_BIOS_PCDH$Mean.methylation
+dTrack_PCDH_blood_mean_with_line<-DataTrack(ann450K_PCDH_blood_mean_with_line,name="DNAm (Beta)",col="#E9E7E8",background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,type = c("a","p"))
+
+# Overlay
+dTrack_PCDH_blood_mean_overlay<- OverlayTrack(list(dTrack_PCDH_blood_mean_with_line,dTrack_PCDH_blood_mean_without_line),background.title="transparent",col.title="black",col.axis="black")
+
+# Brain data track for effect direction
+rownames(dat_mean_BDR_PCDH)<-dat_mean_BDR_PCDH$CpG
+dat_mean_BDR_PCDH<-dat_mean_BDR_PCDH[rs13062095_SENP7_PCDH_brain_positive_negative_all$cpg,]
+annEPIC_PCDH_brain<-GRanges(seqnames="chr5",IRanges(start=dat_mean_BDR_PCDH$Start+1,end=dat_mean_BDR_PCDH$End), strand="*")
+names(annEPIC_PCDH_brain)<-dat_mean_BDR_PCDH$CpG
+
+annEPIC_PCDH_brain_direction<-annEPIC_PCDH_brain[,NULL]
+annEPIC_PCDH_brain_direction<-annEPIC_PCDH_brain_direction[rs13062095_SENP7_PCDH_brain_positive_negative_all$cpg,]
+annEPIC_PCDH_brain_direction$Significance<-rs13062095_SENP7_PCDH_brain_positive_negative_all$Significance
+annEPIC_PCDH_brain_direction$gray<-c(annEPIC_PCDH_brain_direction$Significance[1:642],rep(NA,105))
+annEPIC_PCDH_brain_direction$blue<-c(rep(NA,642),annEPIC_PCDH_brain_direction$Significance[643:747])
+annEPIC_PCDH_brain_direction$Significance<-NULL
+dTrack_PCDH_brain_direction<-DataTrack(annEPIC_PCDH_brain_direction,name="-log10 (P)",groups=c(1,2),col=c("#E9E7E8","#56B4E9"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,ylim=c(-5,5),yTicksAt=c(-4,-2,0,2,4),baseline=0,col.baseline="black",lwd.baseline=2)
+
+# Brain data track for mean methylation
+# without line
+annEPIC_PCDH_brain_mean_without_line<-annEPIC_PCDH_brain
+annEPIC_PCDH_brain_mean_without_line$Mean.methylation<-dat_mean_BDR_PCDH$Mean.methylation
+annEPIC_PCDH_brain_mean_without_line<-annEPIC_PCDH_brain_mean_without_line[rs13062095_SENP7_PCDH_brain_mean$cpg,]
+annEPIC_PCDH_brain_mean_without_line$gray<-c(annEPIC_PCDH_brain_mean_without_line$Mean.methylation[1:642],rep(NA,105))
+annEPIC_PCDH_brain_mean_without_line$blue<-c(rep(NA,642),annEPIC_PCDH_brain_mean_without_line$Mean.methylation[643:747])
+annEPIC_PCDH_brain_mean_without_line$Mean.methylation<-NULL
+dTrack_PCDH_brain_mean_without_line<-DataTrack(annEPIC_PCDH_brain_mean_without_line,name="DNAm (Beta)",groups=c(1,2),col=c("#E9E7E8","#56B4E9"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F)
+
+# with line
+annEPIC_PCDH_brain_mean_with_line<-annEPIC_PCDH_brain
+annEPIC_PCDH_brain_mean_with_line$Mean.methylation<-dat_mean_BDR_PCDH$Mean.methylation
+annEPIC_PCDH_brain_mean_with_line<-annEPIC_PCDH_brain_mean_with_line[rs13062095_SENP7_PCDH_brain_mean$cpg,]
+dTrack_PCDH_brain_mean_with_line<-DataTrack(annEPIC_PCDH_brain_mean_with_line,name="DNAm (Beta)",col="#E9E7E8",background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,type = c("a","p"))
+
+# Overlay
+dTrack_PCDH_brain_mean_overlay<- OverlayTrack(list(dTrack_PCDH_brain_mean_with_line,dTrack_PCDH_brain_mean_without_line),background.title="transparent",col.title="black",col.axis="black")
+
+save(idtrack,axisTrack,dTrack_PCDH_blood_direction,dTrack_PCDH_blood_mean_overlay,dTrack_PCDH_brain_direction,dTrack_PCDH_brain_mean_overlay,Promoters_track,file = "Output_06_rs13062095_SENP7_PCDH_blood_brain_Gviz.RData")
+
+pdf("Output_06_rs13062095_SENP7_PCDH_blood_brain_Gviz.pdf",width = 18,height = 20)
+plotTracks(list(idtrack,axisTrack,dTrack_PCDH_blood_direction,dTrack_PCDH_blood_mean_overlay,dTrack_PCDH_brain_direction,dTrack_PCDH_brain_mean_overlay,Promoters_track),from=140124721,to=140933546,cex=2,cex.axis=2.2,cex.title=2.2,sizes = c(0.2,0.2,0.7,0.7,0.7,0.7,0.4))
+dev.off()
+```
+
+
+```{r}
+# VENTX locus
+loc_VENTX <- locus(meQTL_PCDH_sumstats, gene = 'UTF1',flank = 2e5,ens_db = "EnsDb.Hsapiens.v75")
+loc_VENTX <- link_LD(loc_VENTX, token = "58fa6d42ffb8") # Obtaining LD information
+loc_VENTX<-link_recomb(loc_VENTX, genome = "hg19") # Add recombination rate
+
+pdf("rs11599284_VENTX_locuszoom.pdf",width = 8, height = 6) 
+locus_plot(loc_VENTX,labels = "index",filter_gene_biotype = "protein_coding") 
+dev.off()
+
+# VENTX variant on PCDH methylation in blood and brain
+### BIOS blood
+rs11599284_VENTX_PCDH_blood<-rs11599284_chr10_PCDH_hit
+rs11599284_VENTX_PCDH_blood<-rs11599284_VENTX_PCDH_blood[,c(1,2,3,4,5,7,9,6)]
+colnames(rs11599284_VENTX_PCDH_blood)[4]<-"t.stat"
+colnames(rs11599284_VENTX_PCDH_blood)[5]<-"pvalue"
+colnames(rs11599284_VENTX_PCDH_blood)[7]<-"Position"
+colnames(rs11599284_VENTX_PCDH_blood)[8]<-"Symbol"
+rs11599284_VENTX_PCDH_blood$Tissue<-"Blood"
+
+### BDR brain
+rs11599284_VENTX_PCDH_brain<-subset(Trans_meQTL_PCDH_brain_validation,SNP=="10.135044009_A")
+rownames(rs11599284_VENTX_PCDH_brain)<-rs11599284_VENTX_PCDH_brain$gene
+rs11599284_VENTX_PCDH_brain<-rs11599284_VENTX_PCDH_brain[dat_mean_BDR_PCDH$CpG,]
+rs11599284_VENTX_PCDH_brain$beta<-rs11599284_VENTX_PCDH_brain$beta/dat_mean_BDR_PCDH$sd
+rs11599284_VENTX_PCDH_brain$Position<-dat_mean_BDR_PCDH$Start+1
+rs11599284_VENTX_PCDH_brain$Symbol<-dat_mean_BDR_PCDH$Symbol
+rs11599284_VENTX_PCDH_brain$Tissue<-"Brain"
+colnames(rs11599284_VENTX_PCDH_brain)[5]<-"pvalue"
+rownames(rs11599284_VENTX_PCDH_brain)<-NULL
+save(rs11599284_VENTX_PCDH_blood,rs11599284_VENTX_PCDH_brain,file = "Output_06_VENTX_variant_PCDH_blood_brain.RData")
+
+# Check VENTX statistical significance consistency between blood and brain
+rs11599284_VENTX_PCDH_blood<-rs11599284_VENTX_PCDH_blood[,-c(4,5)]
+rs11599284_VENTX_PCDH_blood$col<-ifelse(rs11599284_VENTX_PCDH_blood$p.adj<0.05,"FDR significant in blood","FDR not significant in blood")
+colnames(rs11599284_VENTX_PCDH_blood)[4]<-"pvalue"
+
+rs11599284_VENTX_PCDH_brain<-rs11599284_VENTX_PCDH_brain[,-4]
+rs11599284_VENTX_PCDH_brain$col<-ifelse(rs11599284_VENTX_PCDH_brain$pvalue<0.05,"Nominal p-value significant in brain","Nominal p-value not significant in brain")
+
+rs11599284_VENTX_PCDH_blood_brain<-rbind(rs11599284_VENTX_PCDH_blood,rs11599284_VENTX_PCDH_brain)
+rs11599284_VENTX_PCDH_blood_brain$col<-factor(rs11599284_VENTX_PCDH_blood_brain$col,levels=c("FDR significant in blood","FDR not significant in blood","Nominal p-value significant in brain","Nominal p-value not significant in brain"))
+save(rs11599284_VENTX_PCDH_blood_brain,file = "Output_06_rs11599284_VENTX_PCDH_blood_brain.RData")
+
+# Check VENTX effect size consistency between blood and brain
+id_overlap<-intersect(rs11599284_VENTX_PCDH_blood$gene,rs11599284_VENTX_PCDH_brain$gene)
+
+rs11599284_VENTX_PCDH_blood_brain_overlap<-subset(rs11599284_VENTX_PCDH_blood_brain,gene%in%id_overlap)
+rs11599284_VENTX_PCDH_blood_overlap<-subset(rs11599284_VENTX_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs11599284_VENTX_PCDH_brain_overlap<-subset(rs11599284_VENTX_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs11599284_VENTX_PCDH_blood_overlap$Significance<-ifelse(rs11599284_VENTX_PCDH_blood_overlap$col=="FDR not significant in blood"&rs11599284_VENTX_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Neither",ifelse(rs11599284_VENTX_PCDH_blood_overlap$col=="FDR significant in blood"&rs11599284_VENTX_PCDH_brain_overlap$col=="Nominal p-value significant in brain","Blood & Brain",ifelse(rs11599284_VENTX_PCDH_blood_overlap$col=="FDR significant in blood"&rs11599284_VENTX_PCDH_brain_overlap$col=="Nominal p-value not significant in brain","Blood only","Brain only")))
+rs11599284_VENTX_PCDH_brain_overlap$Significance<-rs11599284_VENTX_PCDH_blood_overlap$Significance
+rs11599284_VENTX_PCDH_blood_brain_overlap<-rbind(rs11599284_VENTX_PCDH_blood_overlap,rs11599284_VENTX_PCDH_brain_overlap)
+save(rs11599284_VENTX_PCDH_blood_brain_overlap,file = "Output_06_rs11599284_VENTX_PCDH_blood_brain_overlap.RData")    
+
+rs11599284_VENTX_PCDH_blood_overlap<-filter(rs11599284_VENTX_PCDH_blood_brain_overlap,Tissue=="Blood")
+rs11599284_VENTX_PCDH_brain_overlap<-filter(rs11599284_VENTX_PCDH_blood_brain_overlap,Tissue=="Brain")
+
+rs11599284_VENTX_PCDH_blood_brain_overlap_es<-data.frame(CpG=rs11599284_VENTX_PCDH_blood_overlap$gene,blood.es=rs11599284_VENTX_PCDH_blood_overlap$beta,brain.es=rs11599284_VENTX_PCDH_brain_overlap$beta,Symbol=rs11599284_VENTX_PCDH_blood_overlap$Symbol,Significance=rs11599284_VENTX_PCDH_blood_overlap$Significance) 
+save(rs11599284_VENTX_PCDH_blood_brain_overlap_es,file = "Output_06_rs11599284_VENTX_PCDH_blood_brain_overlap_es.RData")
+
+rs11599284_VENTX_PCDH_blood_brain_overlap_es$loci<-"VENTX"
+rs11599284_VENTX_PCDH_blood_brain_overlap_es$Significance<-factor(rs11599284_VENTX_PCDH_blood_brain_overlap_es$Significance,levels = c("Blood & Brain","Blood only","Brain only","Neither"))
+scaleFUN <- function(x) sprintf("%.1f", x)
+
+pdf("VENTX_PCDH_blood_brain_overlap_es.pdf", width=12, height=12)
+ggplot(rs11599284_VENTX_PCDH_blood_brain_overlap_es) +
+          aes(x=blood.es,y=brain.es,color=Significance) +
+          geom_point(size=5, alpha = 0.7) +
+          geom_vline(aes(xintercept=0)) +
+          geom_hline(aes(yintercept=0)) +
+          geom_abline(slope=1, intercept = 0)+
+          scale_x_continuous(limits=c(-0.5, 0.5),labels = scaleFUN)+
+          scale_y_continuous(limits=c(-0.5, 0.5),labels = scaleFUN)+
+          scale_color_manual(values=c("#1FA759","#E76254","#56B4E9","#E9E7E8"))+
+          facet_wrap(~loci,scales = "fixed") +
+          theme_bw() +
+          theme(legend.position = "bottom",legend.text =element_text(size = 30),legend.title = element_blank(),axis.title.x =element_text(size = 35),axis.title.y = element_text(size = 35),axis.text.x = element_text(size = 35,angle = 45,hjust = 1),axis.text.y = element_text(size = 35),strip.text.x = element_text(size = 35))+ 
+   labs(x="Blood effect size",y="Brain effect size") 
+dev.off()
+```
+
+```{r}
+#### Gviz for VENTX variant on PCDH methylation in blood and brain,and there are five data tracks need to be prepared.
+# Data track1 (effect direction in blood)
+# Positive effect (Significant)
+colnames(rs11599284_VENTX_PCDH_blood)[2]<-"cpg"
+colnames(rs11599284_VENTX_PCDH_brain)[2]<-"cpg"
+
+rs11599284_VENTX_PCDH_blood_positive_sig<-filter(rs11599284_VENTX_PCDH_blood,beta>0&p.adj<0.05)
+rs11599284_VENTX_PCDH_blood_positive_sig$Significance<--log10(rs11599284_VENTX_PCDH_blood_positive_sig$pvalue)
+
+# Negative effect (Significant)
+rs11599284_VENTX_PCDH_blood_negative_sig<-filter(rs11599284_VENTX_PCDH_blood,beta<0&p.adj<0.05)  
+rs11599284_VENTX_PCDH_blood_negative_sig$Significance<--(-log10(rs11599284_VENTX_PCDH_blood_negative_sig$pvalue)) 
+
+# Positive effect (Not significant)
+rs11599284_VENTX_PCDH_blood_positive_not_sig<-filter(rs11599284_VENTX_PCDH_blood,beta>0&p.adj>0.05)
+rs11599284_VENTX_PCDH_blood_positive_not_sig$Significance<--log10(rs11599284_VENTX_PCDH_blood_positive_not_sig$pvalue) 
+
+# Negative effect (Not significant)
+rs11599284_VENTX_PCDH_blood_negative_not_sig<-filter(rs11599284_VENTX_PCDH_blood,beta<0&p.adj>0.05)
+rs11599284_VENTX_PCDH_blood_negative_not_sig$Significance<--(-log10(rs11599284_VENTX_PCDH_blood_negative_not_sig$pvalue)) 
+
+rs11599284_VENTX_PCDH_blood_positive_negative_all<-rbind(rs11599284_VENTX_PCDH_blood_positive_not_sig,rs11599284_VENTX_PCDH_blood_negative_not_sig,rs11599284_VENTX_PCDH_blood_positive_sig,rs11599284_VENTX_PCDH_blood_negative_sig)
+
+# Data track2 (Mean methylation in blood)
+rs11599284_VENTX_PCDH_blood_mean<-rbind(rs11599284_VENTX_PCDH_blood_positive_not_sig,rs11599284_VENTX_PCDH_blood_negative_not_sig,rs11599284_VENTX_PCDH_blood_positive_sig,rs11599284_VENTX_PCDH_blood_negative_sig)
+
+# Data track3 (effect direction in brain)
+# Positive effect (Significant)
+rs11599284_VENTX_PCDH_brain_positive_sig<-filter(rs11599284_VENTX_PCDH_brain,beta>0&pvalue<0.05)
+rs11599284_VENTX_PCDH_brain_positive_sig$Significance<--log10(rs11599284_VENTX_PCDH_brain_positive_sig$pvalue)
+
+# Negative effect (Significant)
+rs11599284_VENTX_PCDH_brain_negative_sig<-filter(rs11599284_VENTX_PCDH_brain,beta<0&pvalue<0.05) 
+rs11599284_VENTX_PCDH_brain_negative_sig$Significance<--(-log10(rs11599284_VENTX_PCDH_brain_negative_sig$pvalue)) 
+
+# Positive effect (Not Significant)
+rs11599284_VENTX_PCDH_brain_positive_not_sig<-filter(rs11599284_VENTX_PCDH_brain,beta>0&pvalue>0.05)
+rs11599284_VENTX_PCDH_brain_positive_not_sig$Significance<--log10(rs11599284_VENTX_PCDH_brain_positive_not_sig$pvalue)
+
+# Negative effect (Not Significant)
+rs11599284_VENTX_PCDH_brain_negative_not_sig<-filter(rs11599284_VENTX_PCDH_brain,beta<0&pvalue>0.05)
+rs11599284_VENTX_PCDH_brain_negative_not_sig$Significance<--(-log10(rs11599284_VENTX_PCDH_brain_negative_not_sig$pvalue))
+
+rs11599284_VENTX_PCDH_brain_positive_negative_all<-rbind(rs11599284_VENTX_PCDH_brain_positive_not_sig,rs11599284_VENTX_PCDH_brain_negative_not_sig,rs11599284_VENTX_PCDH_brain_positive_sig,rs11599284_VENTX_PCDH_brain_negative_sig)
+
+# Data track4 (Mean methylation in brain)
+rs11599284_VENTX_PCDH_brain_mean<-rbind(rs11599284_VENTX_PCDH_brain_positive_not_sig,rs11599284_VENTX_PCDH_brain_negative_not_sig,rs11599284_VENTX_PCDH_brain_positive_sig,rs11599284_VENTX_PCDH_brain_negative_sig)
+
+# Data track5 (PCDH promoters:1500 upstream to 500 downstream of TSS)
+txdb <- TxDb.Hsapiens.UCSC.hg19.knownGene
+PCDH_isoforms<-GRanges(seqnames="chr5",ranges=IRanges(start = 140165721, end = 140892546))
+PCDH_isoforms_txdb<-subsetByOverlaps(genes(txdb),PCDH_isoforms)
+PCDH_isoforms_symbol<-select(org.Hs.eg.db,PCDH_isoforms_txdb$gene_id,"SYMBOL")
+PCDH_isoforms_txdb$symbol<-PCDH_isoforms_symbol$SYMBOL
+PCDH_isoforms_txdb<-PCDH_isoforms_txdb[order(ranges(PCDH_isoforms_txdb))]
+
+# PCDHGB4(5:140767265-140892546) and PCDHGA8(5:140772200-140892546) need to be fixed manually.
+id_PCDHGB4<-which(names(PCDH_isoforms_txdb)=="8641")
+start(PCDH_isoforms_txdb[id_PCDHGB4,])<-140767265
+end(PCDH_isoforms_txdb[id_PCDHGB4,])<-140892546
+
+id_PCDHGA8<-which(names(PCDH_isoforms_txdb)=="9708")
+start(PCDH_isoforms_txdb[id_PCDHGA8,])<-140772200
+end(PCDH_isoforms_txdb[id_PCDHGA8,])<-140892546
+
+# Adding PCDHB9 track (chr5:140566735-140571114)
+gr_PCDHB9 <- GRanges(seqnames="chr5",IRanges(start=140566735,end=140571114), strand="+")
+gr_PCDHB9$gene_id<-"56127"
+gr_PCDHB9$symbol<-"PCDHB9"
+PCDH_isoforms_txdb<-c(gr_PCDHB9,PCDH_isoforms_txdb)
+
+# remove unrelated genes (non protein-coding genes/non PCDH genes)
+PCDH_isoforms_txdb<-subset(PCDH_isoforms_txdb,!PCDH_isoforms_txdb$symbol%in% c("PCDHB17P","PCDHB18P","PCDHB19P","SLC25A2","TAF7","PCDHGB8P"))
+PCDH_promoters_txdb<-promoters(PCDH_isoforms_txdb,upstream = 1500, downstream = 500) 
+ann450K_PCDH_Promoters<-PCDH_promoters_txdb
+ann450K_PCDH_Promoters<-ann450K_PCDH_Promoters[,NULL]
+
+#### Gviz plot
+# IdeogramTrack
+idtrack <- IdeogramTrack(genome = "hg19", chromosome = "chr5",fontcolor="black")
+
+# GenomeAxisTrack
+axisTrack <- GenomeAxisTrack()
+
+# Promoters track 
+Promoters_track<-AnnotationTrack(ann450K_PCDH_Promoters, name = "Promoter",background.title="transparent",col.title="black",background.panel = "white",stacking="squish",fill="gray")
+
+# Blood data track for effect direction
+ann450K_PCDH_blood_direction<-ann450K_PCDH[,NULL]
+ann450K_PCDH_blood_direction<-ann450K_PCDH_blood_direction[rs11599284_VENTX_PCDH_blood_positive_negative_all$cpg,]
+ann450K_PCDH_blood_direction$Significance<-rs11599284_VENTX_PCDH_blood_positive_negative_all$Significance
+ann450K_PCDH_blood_direction$gray<-c(ann450K_PCDH_blood_direction$Significance[1:450],rep(NA,157))
+ann450K_PCDH_blood_direction$red<-c(rep(NA,450),ann450K_PCDH_blood_direction$Significance[451:607])
+ann450K_PCDH_blood_direction$Significance<-NULL
+dTrack_PCDH_blood_direction<-DataTrack(ann450K_PCDH_blood_direction,name="-log10 (P)",groups=c(1,2),col=c("#E9E7E8","#E76254"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,ylim=c(-30,30),yTicksAt=c(-30,-15,0,15,30),baseline=0,col.baseline="black",lwd.baseline=2)
+
+# Blood data track for mean methylation
+# without line
+dat_mean_BIOS_PCDH<-dat_mean_BIOS_PCDH[rs11599284_VENTX_PCDH_blood_mean$cpg,]
+ann450K_PCDH_blood_mean_without_line<-ann450K_PCDH[,NULL]
+ann450K_PCDH_blood_mean_without_line<-ann450K_PCDH_blood_mean_without_line[rs11599284_VENTX_PCDH_blood_mean$cpg,]
+ann450K_PCDH_blood_mean_without_line$Mean.methylation<-dat_mean_BIOS_PCDH$Mean.methylation
+ann450K_PCDH_blood_mean_without_line$gray<-c(ann450K_PCDH_blood_mean_without_line$Mean.methylation[1:450],rep(NA,157))
+ann450K_PCDH_blood_mean_without_line$red<-c(rep(NA,450),ann450K_PCDH_blood_mean_without_line$Mean.methylation[451:607])
+ann450K_PCDH_blood_mean_without_line$Mean.methylation<-NULL
+dTrack_PCDH_blood_mean_without_line<-DataTrack(ann450K_PCDH_blood_mean_without_line,name="DNAm (Beta)",groups=c(1,2),col=c("#E9E7E8","#E76254"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F)
+
+# with line
+ann450K_PCDH_blood_mean_with_line<-ann450K_PCDH[,NULL]
+ann450K_PCDH_blood_mean_with_line<-ann450K_PCDH_blood_mean_with_line[rs11599284_VENTX_PCDH_blood_mean$cpg,]
+ann450K_PCDH_blood_mean_with_line$Mean.methylation<-dat_mean_BIOS_PCDH$Mean.methylation
+dTrack_PCDH_blood_mean_with_line<-DataTrack(ann450K_PCDH_blood_mean_with_line,name="DNAm (Beta)",col="#E9E7E8",background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,type = c("a","p"))
+
+# Overlay
+dTrack_PCDH_blood_mean_overlay<- OverlayTrack(list(dTrack_PCDH_blood_mean_with_line,dTrack_PCDH_blood_mean_without_line),background.title="transparent",col.title="black",col.axis="black")
+
+# Brain data track for effect direction
+rownames(dat_mean_BDR_PCDH)<-dat_mean_BDR_PCDH$CpG
+dat_mean_BDR_PCDH<-dat_mean_BDR_PCDH[rs11599284_VENTX_PCDH_brain_positive_negative_all$cpg,]
+annEPIC_PCDH_brain<-GRanges(seqnames="chr5",IRanges(start=dat_mean_BDR_PCDH$Start+1,end=dat_mean_BDR_PCDH$End), strand="*")
+names(annEPIC_PCDH_brain)<-dat_mean_BDR_PCDH$CpG
+
+annEPIC_PCDH_brain_direction<-annEPIC_PCDH_brain[,NULL]
+annEPIC_PCDH_brain_direction<-annEPIC_PCDH_brain_direction[rs11599284_VENTX_PCDH_brain_positive_negative_all$cpg,]
+annEPIC_PCDH_brain_direction$Significance<-rs11599284_VENTX_PCDH_brain_positive_negative_all$Significance
+annEPIC_PCDH_brain_direction$gray<-c(annEPIC_PCDH_brain_direction$Significance[1:694],rep(NA,53))
+annEPIC_PCDH_brain_direction$blue<-c(rep(NA,694),annEPIC_PCDH_brain_direction$Significance[695:747])
+annEPIC_PCDH_brain_direction$Significance<-NULL
+dTrack_PCDH_brain_direction<-DataTrack(annEPIC_PCDH_brain_direction,name="-log10 (P)",groups=c(1,2),col=c("#E9E7E8","#56B4E9"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,ylim=c(-4,4),yTicksAt=c(-4,-2,0,2,4),baseline=0,col.baseline="black",lwd.baseline=2)
+
+# Brain data track for mean methylation
+# without line
+annEPIC_PCDH_brain_mean_without_line<-annEPIC_PCDH_brain
+annEPIC_PCDH_brain_mean_without_line$Mean.methylation<-dat_mean_BDR_PCDH$Mean.methylation
+annEPIC_PCDH_brain_mean_without_line<-annEPIC_PCDH_brain_mean_without_line[rs11599284_VENTX_PCDH_brain_mean$cpg,]
+annEPIC_PCDH_brain_mean_without_line$gray<-c(annEPIC_PCDH_brain_mean_without_line$Mean.methylation[1:694],rep(NA,53))
+annEPIC_PCDH_brain_mean_without_line$blue<-c(rep(NA,694),annEPIC_PCDH_brain_mean_without_line$Mean.methylation[695:747])
+annEPIC_PCDH_brain_mean_without_line$Mean.methylation<-NULL
+dTrack_PCDH_brain_mean_without_line<-DataTrack(annEPIC_PCDH_brain_mean_without_line,name="DNAm (Beta)",groups=c(1,2),col=c("#E9E7E8","#56B4E9"),background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F)
+
+# with line
+annEPIC_PCDH_brain_mean_with_line<-annEPIC_PCDH_brain
+annEPIC_PCDH_brain_mean_with_line$Mean.methylation<-dat_mean_BDR_PCDH$Mean.methylation
+annEPIC_PCDH_brain_mean_with_line<-annEPIC_PCDH_brain_mean_with_line[rs11599284_VENTX_PCDH_brain_mean$cpg,]
+dTrack_PCDH_brain_mean_with_line<-DataTrack(annEPIC_PCDH_brain_mean_with_line,name="DNAm (Beta)",col="#E9E7E8",background.title="transparent",col.title="black",col.axis="black",background.panel = "white",legend=F,type = c("a","p"))
+
+# Overlay
+dTrack_PCDH_brain_mean_overlay<- OverlayTrack(list(dTrack_PCDH_brain_mean_with_line,dTrack_PCDH_brain_mean_without_line),background.title="transparent",col.title="black",col.axis="black")
+
+save(idtrack,axisTrack,dTrack_PCDH_blood_direction,dTrack_PCDH_blood_mean_overlay,dTrack_PCDH_brain_direction,dTrack_PCDH_brain_mean_overlay,Promoters_track,file = "Output_06_rs11599284_VENTX_PCDH_blood_brain_Gviz.RData")
+
+pdf("Output_06_rs11599284_VENTX_PCDH_blood_brain_Gviz.pdf",width = 18,height = 20)
+plotTracks(list(idtrack,axisTrack,dTrack_PCDH_blood_direction,dTrack_PCDH_blood_mean_overlay,dTrack_PCDH_brain_direction,dTrack_PCDH_brain_mean_overlay,Promoters_track),from=140124721,to=140933546,cex=2,cex.axis=2.2,cex.title=2.2,sizes = c(0.2,0.2,0.7,0.7,0.7,0.7,0.4))
+dev.off()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
