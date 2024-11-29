@@ -156,11 +156,11 @@ dev.off()
 
 ```{r}
 # Compare PCDH methylation between blood and brain
-Overlap_cpg<-intersect(rownames(dat_mean_BIOS_PCDH),dat_mean_BRD_PCDH$CpG)
+Overlap_cpg<-intersect(rownames(dat_mean_BIOS_PCDH),dat_mean_BDR_PCDH$CpG)
 dat_mean_BIOS_PCDH_overlap<-dat_mean_BIOS_PCDH[Overlap_cpg,]
-rownames(dat_mean_BRD_PCDH)<-dat_mean_BRD_PCDH$CpG
-dat_mean_BRD_PCDH_overlap<-dat_mean_BRD_PCDH[Overlap_cpg,]
-dat_mean_PCDH_blood_brain<-data.frame(CpG=rownames(dat_mean_BIOS_PCDH_overlap),Blood=dat_mean_BIOS_PCDH_overlap$Mean.methylation,Brain=dat_mean_BRD_PCDH_overlap$Mean.methylation)  
+rownames(dat_mean_BDR_PCDH)<-dat_mean_BDR_PCDH$CpG
+dat_mean_BDR_PCDH_overlap<-dat_mean_BDR_PCDH[Overlap_cpg,]
+dat_mean_PCDH_blood_brain<-data.frame(CpG=rownames(dat_mean_BIOS_PCDH_overlap),Blood=dat_mean_BIOS_PCDH_overlap$Mean.methylation,Brain=dat_mean_BDR_PCDH_overlap$Mean.methylation)  
 dat_mean_PCDH_blood_brain$Symbol<-dat_mean_BIOS_PCDH_overlap$Symbol
 save(dat_mean_PCDH_blood_brain,file = "Output_03_dat_mean_PCDH_blood_brain.RData")
 
