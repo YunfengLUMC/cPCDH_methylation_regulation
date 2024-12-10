@@ -33,15 +33,15 @@ mvalues<-dropSeqlevels(mvalues,c("chrX","chrY"),pruning.mode = "coarse")
 dim(mvalues)   # 470211   4386 
 
 # Load maskProbes data
-maskProbes_450 <- as.data.frame(fread(file = "Input_01_HM450.hg19.manifest.tsv"))
+maskProbes_450K <- as.data.frame(fread(file = "Input_01_HM450.hg19.manifest.tsv"))
 ```
 
 ```{r}
 ## remove unreliable probes 
 ## hg19 genome:60466 probes on whole genome are recommended to remove based on zhou et.al
 
-maskProbes_450 <- filter(maskProbes_450,MASK_general=="TRUE")
-mvalues_BIOS <- mvalues[!(rownames(mvalues) %in% maskProbes_450$probeID),] 
+maskProbes_450K <- filter(maskProbes_450K,MASK_general=="TRUE")
+mvalues_BIOS <- mvalues[!(rownames(mvalues) %in% maskProbes_450K$probeID),] 
 dim(mvalues_BIOS) # 412373   4386
 
 # Remove some samples (N=263) who their age is missing
